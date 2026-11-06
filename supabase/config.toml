@@ -1,0 +1,5 @@
+project_id = "vem-app"
+
+[functions.kiwify-webhook]
+verify_jwt = false
+
