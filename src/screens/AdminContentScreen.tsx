@@ -535,7 +535,7 @@ function NoticesTab() {
         <AppText weight="700">Lembrete importante</AppText>
         <AppText variant="caption" color={theme.colors.textMuted}>Aparece no Início até a participante dispensar.</AppText>
         <Field label="Texto do aviso" value={draft.aviso?.texto ?? ''} onChange={(texto) => update((doc) => { doc.aviso = { id: uid('a'), texto, exemplo: false }; })} multiline />
-        <Field label="Meta semanal padrão (quando o programa não define)" value={String(draft.metaSemanalPadrao ?? 3)} onChange={(value) => update((doc) => { doc.metaSemanalPadrao = Math.min(7, Math.max(1, Number(value) || 3)); })} keyboardType="number-pad" />
+        <Field label="Meta semanal padrão (quando o programa não define)" value={String(draft.metaSemanalPadrao ?? 3)} onChange={(value) => update((doc) => { doc.metaSemanalPadrao = Math.min(4, Math.max(2, Number(value) || 3)); })} keyboardType="number-pad" />
       </AppCard>
       <AppText weight="700">Frase do dia</AppText>
       <AppText variant="caption" color={theme.colors.textMuted}>{phrases.filter((item) => !item.data).length >= 3 ? 'O app faz rodízio entre as frases sem dia fixo.' : 'Com menos de 3 frases sem dia fixo, o app usa as frases da VEM.'} Frase com dia fixo aparece só naquele dia.</AppText>

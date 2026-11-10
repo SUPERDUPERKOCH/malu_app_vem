@@ -146,7 +146,7 @@ export function PanelScreen() {
           />
           <AppText variant="caption" color={theme.colors.textMuted}>TREINOS POR SEMANA</AppText>
           <View style={styles.goals}>
-            {[1, 2, 3, 4, 5, 6, 7].map((amount) => (
+            {[2, 3, 4].map((amount) => (
               <AppButton
                 key={amount}
                 label={String(amount)}

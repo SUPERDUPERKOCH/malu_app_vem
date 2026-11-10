@@ -58,5 +58,5 @@ export async function loadPanel(): Promise<PanelProfile> {
 }
 
 export async function savePanel(next: PanelProfile): Promise<void> {
-  await updateMyProfile({ preferredName: next.apelido?.trim() || null, objective: next.objetivo?.trim() || null, personalGoal: next.metaPessoal?.trim() || null, weeklyGoal: next.metaSemanal ?? null, level: next.nivel ?? null, modality: next.modalidade ?? null, notifyWorkouts: next.notif.treino, notifyMeetings: next.notif.encontros, notifyRewards: next.notif.premios, shareProgressWithTeam: next.privacidade.contarEquipe });
+  await updateMyProfile({ preferredName: next.apelido?.trim() || null, objective: next.objetivo?.trim() || null, personalGoal: next.metaPessoal?.trim() || null, weeklyGoal: next.metaSemanal == null ? null : Math.min(4, Math.max(2, next.metaSemanal)), level: next.nivel ?? null, modality: next.modalidade ?? null, notifyWorkouts: next.notif.treino, notifyMeetings: next.notif.encontros, notifyRewards: next.notif.premios, shareProgressWithTeam: next.privacidade.contarEquipe });
 }

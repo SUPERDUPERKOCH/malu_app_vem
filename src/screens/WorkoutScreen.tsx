@@ -19,7 +19,6 @@ import {
   checkWorkoutSchedule,
   dayKindsFromPlan,
   discardWorkout,
-  distributeSchedule,
   finishWorkout,
   loadWorkoutOverview,
   resetWorkoutSchedule,
@@ -27,7 +26,6 @@ import {
   setWorkoutLoad,
   startWorkout,
   todayCode,
-  toggleMobilityItem,
   toggleWorkoutSet,
   toggleWorkoutTimer,
   workoutElapsed,
@@ -48,7 +46,6 @@ import { serifFont, useAppTheme } from '../theme';
 const DAY_SHORT: Record<string, string> = { seg: 'SEG', ter: 'TER', qua: 'QUA', qui: 'QUI', sex: 'SEX', sab: 'SÁB', dom: 'DOM' };
 const DAY_NAME: Record<string, string> = { seg: 'Segunda', ter: 'Terça', qua: 'Quarta', qui: 'Quinta', sex: 'Sexta', sab: 'Sábado', dom: 'Domingo' };
 const DAY_KINDS: Array<[DayKind, string]> = [['treino', 'Treino'], ['cardio', 'Cardio'], ['folga', 'Folga']];
-const MOBILITY_TITLE: Record<string, string> = { inferior: 'Dias de pernas e glúteo', superior: 'Dias de parte de cima' };
 const BLOCK_DESC: Record<string, string> = {
   Principal: 'os exercícios que mais constroem músculo: capricha na carga',
   'Acessórios': 'isola e dá forma',
@@ -235,76 +232,6 @@ function ResponsibleLine({ responsible }: { responsible: WorkoutProfessional }) 
   );
 }
 
-/** Mobilidade como no esboço: cartão recolhível; dentro do treino, cada exercício pode ser marcado. */
-function MobilityCard({
-  workout,
-  warmup,
-  done,
-  busy,
-  onToggle,
-}: {
-  workout: NativeWorkout;
-  warmup: boolean;
-  done?: string[];
-  busy?: boolean;
-  onToggle?: (itemId: string) => void;
-}) {
-  const theme = useAppTheme();
-  const completed = done ? workout.mobility.filter((item) => done.includes(item.id)).length : 0;
-  const allDone = !!done && completed === workout.mobility.length;
-  const [open, setOpen] = useState(!allDone);
-  if (!workout.mobility.length) return null;
-  return (
-    <AppCard style={styles.mobilityCard}>
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen((value) => !value)} style={styles.mobilityHeader}>
-        <View style={styles.flex}>
-          <AppText variant="caption" color={theme.colors.textMuted} weight="700">Antes de começar · 5 min</AppText>
-          <AppText variant="subtitle" weight="700" color={theme.colors.primary} style={styles.serif}>
-            Mobilidade · {MOBILITY_TITLE[workout.mobilityGroup ?? ''] ?? 'Preparação'}
-          </AppText>
-          <AppText variant="caption" color={theme.colors.textMuted}>
-            {done ? `${completed} de ${workout.mobility.length} feitos · ` : ''}todos em sequência e sem pausa
-          </AppText>
-        </View>
-        <View style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}><VemIcon name="chevronRight" size={18} color={theme.colors.textMuted} /></View>
-      </Pressable>
-      {open && (
-        <View style={styles.mobilityList}>
-          {workout.mobility.map((item, index) => {
-            const checked = !!done?.includes(item.id);
-            return (
-              <View key={`${item.id}-${index}`} style={styles.mobilityRow}>
-                <View style={styles.flex}>
-                  <AppText weight="700">{item.name}</AppText>
-                  {!!item.repetitions && <AppText variant="caption" color={theme.colors.primary} weight="800">{item.repetitions}</AppText>}
-                  {!!item.instructions && <AppText variant="caption" color={theme.colors.textMuted}>{item.instructions}</AppText>}
-                </View>
-                {onToggle && (
-                  <Pressable
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked, disabled: busy }}
-                    accessibilityLabel={`${checked ? 'Desmarcar' : 'Marcar'} ${item.name}`}
-                    disabled={busy}
-                    onPress={() => onToggle(item.id)}
-                    style={[styles.mobilityCheck, { backgroundColor: checked ? theme.colors.success : 'transparent', borderColor: checked ? theme.colors.success : theme.colors.border }]}
-                  >
-                    <VemIcon name="check" size={18} color={checked ? '#fff' : theme.colors.textMuted} />
-                  </Pressable>
-                )}
-              </View>
-            );
-          })}
-          {warmup && (
-            <AppText variant="caption" color={theme.colors.textMuted}>
-              Na academia, depois da mobilidade faça 1 série leve (metade da carga, 12–15 reps) do primeiro exercício do treino.
-            </AppText>
-          )}
-        </View>
-      )}
-    </AppCard>
-  );
-}
-
 function DetailRow({ title, subtitle, text }: { title: string; subtitle?: string; text?: string }) {
   const theme = useAppTheme();
   return (
@@ -318,7 +245,7 @@ function DetailRow({ title, subtitle, text }: { title: string; subtitle?: string
   );
 }
 
-/** Folha "Meus dias de treino" do esboço: tipo de cada dia; os treinos entram em ordem. */
+/** Permite escolher o tipo de cada dia e também qual treino será feito nele. */
 function ScheduleEditor({
   program,
   initialPlan,
@@ -335,12 +262,34 @@ function ScheduleEditor({
   onSaved: () => Promise<void>;
 }) {
   const theme = useAppTheme();
-  const [kinds, setKinds] = useState<Record<string, DayKind>>(() => dayKindsFromPlan(initialPlan));
+  const [plan, setPlan] = useState<Record<string, string>>(() => ({ ...initialPlan }));
   const [saving, setSaving] = useState(false);
-  const plan = distributeSchedule(program, kinds);
+  const kinds = dayKindsFromPlan(plan);
   const check = checkWorkoutSchedule(program, plan);
-  const letters = program.workouts.map((workout) => workout.letter).join(', ');
   const missing = check.required - check.trainingDays;
+  const everyWorkoutOnce = program.workouts.every((workout) => WEEK_DAYS.filter((day) => plan[day] === workout.letter).length === 1);
+
+  const chooseKind = (day: string, kind: DayKind): void => {
+    setPlan((current) => {
+      if (kind === 'cardio') return { ...current, [day]: `cardio|${cardioMinutes(program)}` };
+      if (kind === 'folga') return { ...current, [day]: 'descanso' };
+      if (program.workouts.some((workout) => workout.letter === current[day])) return current;
+      const used = new Set(Object.entries(current).filter(([currentDay]) => currentDay !== day).map(([, value]) => value));
+      const available = program.workouts.find((workout) => !used.has(workout.letter)) ?? program.workouts[0];
+      return { ...current, [day]: available?.letter ?? 'descanso' };
+    });
+  };
+
+  /** Ao escolher um treino já usado, troca os dois de lugar para não criar duplicidade. */
+  const chooseWorkout = (day: string, letter: string): void => {
+    setPlan((current) => {
+      const previous = current[day];
+      const otherDay = WEEK_DAYS.find((candidate) => candidate !== day && current[candidate] === letter);
+      const next = { ...current, [day]: letter };
+      if (otherDay && typeof previous === 'string' && program.workouts.some((workout) => workout.letter === previous)) next[otherDay] = previous;
+      return next;
+    });
+  };
 
   const run = async (action: () => Promise<void>, failure: string): Promise<void> => {
     try {
@@ -368,7 +317,7 @@ function ScheduleEditor({
           </View>
         </View>
         <AppText variant="caption">
-          Escolha <AppText variant="caption" weight="800">{check.required} dias de treino</AppText>. O app coloca os treinos {letters} nessa ordem. Nos outros dias, marque cardio ou folga.
+          Escolha <AppText variant="caption" weight="800">{check.required} dias de treino</AppText> e defina qual treino será feito em cada um. Nos outros dias, marque cardio ou folga.
         </AppText>
 
         <AppCard style={styles.dayList}>
@@ -377,27 +326,49 @@ function ScheduleEditor({
             const workout = kinds[day] === 'treino' ? program.workouts.find((item) => item.letter === value) : undefined;
             const subtitle = workout ? workout.name : kinds[day] === 'cardio' ? `Cardio · ${cardioMinutes(program)}` : kinds[day] === 'treino' ? 'Treino a mais' : 'Sem treino e sem cardio';
             return (
-              <View key={day} style={[styles.dayRow, index > 0 && { borderTopWidth: 1, borderTopColor: theme.colors.border }]}>
-                <View style={styles.flex}>
-                  <AppText weight="700">{DAY_NAME[day]}</AppText>
-                  <AppText variant="caption" color={theme.colors.textMuted} numberOfLines={2}>{subtitle}</AppText>
+              <View key={day} style={[styles.scheduleDay, index > 0 && { borderTopWidth: 1, borderTopColor: theme.colors.border }]}>
+                <View style={styles.dayRow}>
+                  <View style={styles.flex}>
+                    <AppText weight="700">{DAY_NAME[day]}</AppText>
+                    <AppText variant="caption" color={theme.colors.textMuted} numberOfLines={2}>{subtitle}</AppText>
+                  </View>
+                  <View style={styles.dayOptions} accessibilityRole="radiogroup" accessibilityLabel={DAY_NAME[day]}>
+                    {DAY_KINDS.map(([kind, label]) => {
+                      const selected = kinds[day] === kind;
+                      return (
+                        <Pressable
+                          key={kind}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
+                          onPress={() => chooseKind(day, kind)}
+                          style={[styles.dayChip, { borderColor: selected ? theme.colors.primary : theme.colors.border, backgroundColor: selected ? theme.colors.primary : theme.colors.surface }]}
+                        >
+                          <AppText variant="caption" weight="700" color={selected ? '#fff' : theme.colors.text}>{label}</AppText>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </View>
-                <View style={styles.dayOptions} accessibilityRole="radiogroup" accessibilityLabel={DAY_NAME[day]}>
-                  {DAY_KINDS.map(([kind, label]) => {
-                    const selected = kinds[day] === kind;
-                    return (
-                      <Pressable
-                        key={kind}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: selected }}
-                        onPress={() => setKinds((current) => ({ ...current, [day]: kind }))}
-                        style={[styles.dayChip, { borderColor: selected ? theme.colors.primary : theme.colors.border, backgroundColor: selected ? theme.colors.primary : theme.colors.surface }]}
-                      >
-                        <AppText variant="caption" weight="700" color={selected ? '#fff' : theme.colors.text}>{label}</AppText>
-                      </Pressable>
-                    );
-                  })}
-                </View>
+                {kinds[day] === 'treino' && (
+                  <View style={styles.workoutChoices} accessibilityRole="radiogroup" accessibilityLabel={`Treino de ${DAY_NAME[day]}`}>
+                    {program.workouts.map((option) => {
+                      const selected = plan[day] === option.letter;
+                      const shortName = option.name.replace(/^Treino\s*\d*\s*·?\s*/i, '') || option.focus;
+                      return (
+                        <Pressable
+                          key={option.id}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: selected }}
+                          onPress={() => chooseWorkout(day, option.letter)}
+                          style={[styles.workoutChoice, { borderColor: selected ? theme.colors.primary : theme.colors.border, backgroundColor: selected ? `${theme.colors.primary}16` : theme.colors.surface }]}
+                        >
+                          <AppText variant="caption" weight="800" color={selected ? theme.colors.primary : theme.colors.text}>Treino {option.letter}</AppText>
+                          <AppText variant="caption" color={theme.colors.textMuted} numberOfLines={1}>{shortName}</AppText>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
               </View>
             );
           })}
@@ -412,6 +383,9 @@ function ScheduleEditor({
               ? `Falta${missing > 1 ? 'm' : ''} ${missing} dia${missing > 1 ? 's' : ''} de treino.`
               : `Tem ${-missing} dia${-missing > 1 ? 's' : ''} de treino a mais. O seu programa é de ${check.required} por semana.`}
           </AppText>
+        )}
+        {missing === 0 && !everyWorkoutOnce && (
+          <AppText variant="caption" color={theme.colors.danger}>Escolha cada treino uma vez na semana, sem repetir.</AppText>
         )}
         {check.conflict && (
           <AppText variant="caption" color={theme.colors.danger}>
@@ -488,7 +462,7 @@ function ProgramCard({ overview, onEditDays }: { overview: WorkoutOverview; onEd
               <AppText style={cardio ? styles.dayCellSmall : styles.dayCellValue} weight="700" color={training ? theme.colors.brandText : theme.colors.text}>
                 {cardio ? 'cardio' : rest ? '–' : value}
               </AppText>
-              <AppText style={styles.dayCellLabel} color={fg} numberOfLines={1}>{cardio ? value.split('|')[1] ?? '' : rest ? 'folga' : 'treino'}</AppText>
+              {!cardio && <AppText style={styles.dayCellLabel} color={fg} numberOfLines={1}>{rest ? 'folga' : 'treino'}</AppText>}
             </View>
           );
         })}
@@ -509,7 +483,7 @@ function ProgramCard({ overview, onEditDays }: { overview: WorkoutOverview; onEd
           {!!program.equipment && <AppText variant="caption"><AppText variant="caption" weight="700">Você vai precisar: </AppText>{program.equipment}</AppText>}
           <AppText variant="caption">
             <AppText variant="caption" weight="700">Todo treino segue a mesma ordem: </AppText>
-            mobilidade (nos dias de perna), os exercícios do treino, abdômen (nos dias de parte de cima) e cardio. Não pule etapas.
+            os exercícios do treino, abdômen (nos dias de parte de cima) e cardio. Não pule etapas.
           </AppText>
           {!!program.phases.length && <AppText variant="caption" weight="700" color={theme.colors.textMuted}>As 12 semanas do plano</AppText>}
           {program.phases.map((phase, index) => (
@@ -549,7 +523,6 @@ export function WorkoutScreen() {
   const [restUntil, setRestUntil] = useState<number | null>(null);
   const [editingSchedule, setEditingSchedule] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [mobilityBusy, setMobilityBusy] = useState(false);
   const [section, setSection] = useState<'treinos' | 'corrida'>('treinos');
   const [externalType, setExternalType] = useState<string | null>(null);
   const navigation = useNavigation();
@@ -651,21 +624,6 @@ export function WorkoutScreen() {
     }
   };
 
-  const toggleMobility = async (session: ActiveWorkoutSession, workout: NativeWorkout, itemId: string): Promise<void> => {
-    if (mobilityBusy) return;
-    setMobilityBusy(true);
-    try {
-      const willComplete = !session.mobilidade.includes(itemId);
-      await toggleMobilityItem(session.id, itemId, workout.mobility.length);
-      if (willComplete) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await load();
-    } catch (error) {
-      Alert.alert('Não foi possível marcar a mobilidade', error instanceof Error ? error.message : 'Tente novamente em instantes.');
-    } finally {
-      setMobilityBusy(false);
-    }
-  };
-
   const finish = (): void => {
     const session = overview.activeSession;
     if (!session) return;
@@ -734,13 +692,6 @@ export function WorkoutScreen() {
           )}
 
           <AppText color={theme.colors.textMuted}>Digite a carga usada e marque cada série concluída.</AppText>
-          <MobilityCard
-            workout={activeWorkout}
-            warmup={!!overview.program?.warmup}
-            done={session.mobilidade}
-            busy={mobilityBusy}
-            onToggle={(itemId) => void toggleMobility(session, activeWorkout, itemId)}
-          />
           {withBlocks(
             activeWorkout.items,
             (item, index) => (
@@ -837,7 +788,6 @@ export function WorkoutScreen() {
               </Pressable>
               {expanded && (
                 <View style={styles.expanded}>
-                  <MobilityCard workout={workout} warmup={!!overview.program?.warmup} />
                   {withBlocks(
                     workout.items,
                     (item, index) => (
@@ -904,17 +854,15 @@ const styles = StyleSheet.create({
   centerButton: { alignSelf: 'center', padding: 10 },
   blockHeader: { marginTop: 6, gap: 1 },
   responsible: { borderTopWidth: 1, borderStyle: 'dashed', paddingTop: 10 },
-  mobilityCard: { gap: 10 },
-  mobilityHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  mobilityList: { gap: 10 },
-  mobilityRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  mobilityCheck: { width: 44, height: 44, borderRadius: 22, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   sheetTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   backButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   dayList: { gap: 0, paddingVertical: 4 },
+  scheduleDay: { paddingVertical: 4 },
   dayRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
   dayOptions: { flexDirection: 'row', gap: 4 },
   dayChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 7, minHeight: 36, justifyContent: 'center' },
+  workoutChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingBottom: 10 },
+  workoutChoice: { minWidth: 112, maxWidth: 180, flexGrow: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
   countBadge: { alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   completedCard: { marginHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
   completedIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },

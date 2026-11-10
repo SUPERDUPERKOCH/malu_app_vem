@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Alert, PixelRatio, Platform, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,9 @@ import { serifFont, useAppTheme } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Compartilhar'>;
 const PREVIEW_WIDTH = 240;
+// No iOS o toDataURL desenha a arte no tamanho da view (ignora o tamanho pedido) e multiplica
+// o canvas pela escala da tela. Por isso exportamos de uma cópia invisível em pontos: 1080 px ÷ escala.
+const IOS_EXPORT_SIZE = { width: STORY_SIZE.width / PixelRatio.get(), height: STORY_SIZE.height / PixelRatio.get() };
 
 function Options<T extends string>({ options, value, onChange }: { options: ReadonlyArray<readonly [T, string]>; value: T; onChange: (value: T) => void }) {
   const theme = useAppTheme();
@@ -33,6 +36,7 @@ export function ShareScreen({ navigation, route }: Props) {
   const theme = useAppTheme();
   const mode = route.params.mode;
   const svgRef = useRef<Svg>(null);
+  const iosExportRef = useRef<Svg>(null);
   const [summary, setSummary] = useState<DaySummary | null>(null);
   const [phrase, setPhrase] = useState(route.params.phrase ?? '');
   const [style, setStyle] = useState<StoryStyle>('branco');
@@ -48,22 +52,24 @@ export function ShareScreen({ navigation, route }: Props) {
     if (!route.params.phrase) loadPhraseOfDay().then(setPhrase).catch(() => undefined);
   }, [mode, route.params.phrase]));
 
-/** Gera o PNG 1080×1920 a partir da prévia e entrega para salvar ou compartilhar. */
+/** Gera o PNG 1080×1920 e entrega para salvar ou compartilhar. */
   const exportImage = (action: 'share' | 'save'): void => {
-    if (!svgRef.current) { Alert.alert('A imagem ainda está sendo gerada.'); return; }
+    const source = Platform.OS === 'ios' ? iosExportRef.current : svgRef.current;
+    if (!source) { Alert.alert('A imagem ainda está sendo gerada.'); return; }
     if (action === 'share') setSharing(true); else setSaving(true);
-    svgRef.current.toDataURL((base64: string) => {
+    source.toDataURL((base64: string) => {
       const data = base64.replace(/^data:image\/png;base64,/, '');
       const name = `vem-${mode}-${Date.now()}`;
       (action === 'share' ? sharePng(data, name) : savePngToGallery(data, name).then(() => Alert.alert('Imagem salva', 'Ela já está na galeria do seu celular.')))
         .catch((error: unknown) => Alert.alert(action === 'share' ? 'Não foi possível compartilhar' : 'Não foi possível salvar', error instanceof Error ? error.message : 'Tente novamente.'))
         .finally(() => { setSharing(false); setSaving(false); });
-    }, STORY_SIZE);
+    }, Platform.OS === 'ios' ? IOS_EXPORT_SIZE : STORY_SIZE);
   };
 
   if (mode === 'treino' && !summary) return <SafeAreaView style={[styles.center, { backgroundColor: theme.colors.background }]}><AppText color={theme.colors.textMuted}>Montando seu resumo…</AppText></SafeAreaView>;
 
   const storySummary = summary ? { names: summary.names, count: summary.count, minutes: summary.minutes, volumeKg: summary.volumeKg, calories: summary.calories } : undefined;
+  const artProps = { style, position, phrase: mode === 'frase' || withPhrase ? phrase : undefined, summary: mode === 'treino' ? storySummary : undefined };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['left', 'right', 'bottom']}>
@@ -92,7 +98,7 @@ export function ShareScreen({ navigation, route }: Props) {
           {mode === 'treino' && <View style={styles.between}><AppText style={styles.flex}>Incluir a frase do dia</AppText><Switch value={withPhrase} onValueChange={setWithPhrase} /></View>}
           <View style={[styles.phone, { backgroundColor: dark ? '#3d2a2b' : '#e7d6c6' }]} accessible accessibilityLabel="Prévia da imagem em formato de story">
             <View style={[styles.glow, { backgroundColor: dark ? '#8a5d55' : '#fff8ef' }]} />
-            <StoryArt svgRef={svgRef} width={PREVIEW_WIDTH} style={style} position={position} phrase={mode === 'frase' || withPhrase ? phrase : undefined} summary={mode === 'treino' ? storySummary : undefined} />
+            <StoryArt svgRef={svgRef} width={PREVIEW_WIDTH} {...artProps} />
           </View>
           <View style={styles.previewToggle}>
             <AppText variant="caption" color={theme.colors.textMuted}>Prévia sobre foto</AppText>
@@ -107,12 +113,18 @@ export function ShareScreen({ navigation, route }: Props) {
         </AppCard>
         <AppButton label={mode === 'treino' ? 'Voltar ao início' : 'Fechar'} variant="secondary" onPress={() => (mode === 'treino' ? navigation.navigate('Principal', { screen: 'Inicio' }) : navigation.goBack())} />
       </ScrollView>
+      {Platform.OS === 'ios' && (
+        <View style={styles.offscreen} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <StoryArt svgRef={iosExportRef} width={IOS_EXPORT_SIZE.width} {...artProps} />
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
+  offscreen: { position: 'absolute', top: 0, left: -10000 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 16, gap: 14, paddingBottom: 40 },
   top: { alignItems: 'center', gap: 8 },

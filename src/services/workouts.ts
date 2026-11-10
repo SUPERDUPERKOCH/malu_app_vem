@@ -77,36 +77,89 @@ function phaseRange(label: string, index: number): { startWeek: number; endWeek:
 
 function mapWorkouts(content: LegacyContent | null, selectedProgramId?: string): NativeWorkout[] {
   const exercises = new Map((content?.exercicios ?? []).map((exercise) => [exercise.id, exercise]));
-  return (content?.programas ?? []).filter((program) => !selectedProgramId || program.id === selectedProgramId).flatMap((program) => (program.treinos ?? []).map((workout) => {
+  return (content?.programas ?? []).filter((program) => !selectedProgramId || program.id === selectedProgramId).flatMap((program) => (program.treinos ?? []).slice(0, 4).map((workout) => {
     const rawItems = workout.itens ?? [];
-    const mobility = workout.mob ? (content?.mobilidade?.[workout.mob] ?? []).map((item) => {
+    const items: WorkoutItem[] = rawItems.map((item) => {
       const exercise = exercises.get(item.exId);
-      return { id: item.exId, name: exercise?.nome ?? 'Mobilidade', repetitions: item.qtd ?? '', instructions: item.como ?? '' };
-    }) : [];
+      const isCardio = item.bloco?.toLowerCase() === 'cardio' || exercise?.grupo?.toLowerCase() === 'cardio';
+      return {
+        id: item.id,
+        exerciseId: item.exId,
+        sets: isCardio ? 1 : item.series ?? 0,
+        repetitions: isCardio ? '30–40 min' : item.reps ?? '',
+        loadKg: isCardio ? 0 : item.carga ?? 0,
+        supportsLoad: !isCardio && (item.kg === true || (item.carga ?? 0) > 0),
+        block: isCardio ? 'Cardio' : item.bloco ?? '',
+        restSeconds: isCardio ? 0 : item.descanso ?? 60,
+        notes: item.obs ?? '',
+        exercise: {
+          id: item.exId,
+          name: exercise?.nome ?? 'Exercício',
+          group: exercise?.grupo ?? '',
+          instructions: exercise?.dicas ?? '',
+          commonErrors: exercise?.erros ?? '',
+          alternativeId: exercise?.alternativa,
+          videoUrl: exercise?.videoLink || exercise?.video,
+        },
+      };
+    });
+    if (!items.some((item) => item.block === 'Cardio')) {
+      items.push({
+        id: `${workout.id}-cardio`,
+        exerciseId: 'cardio-pos-treino',
+        sets: 1,
+        repetitions: '30–40 min',
+        loadKg: 0,
+        supportsLoad: false,
+        block: 'Cardio',
+        restSeconds: 0,
+        notes: 'Faça logo após concluir os exercícios do treino.',
+        exercise: {
+          id: 'cardio-pos-treino',
+          name: 'Cardio pós-treino',
+          group: 'Cardio',
+          instructions: '',
+          commonErrors: '',
+        },
+      });
+    }
     return {
-      id: workout.id, programId: program.id, letter: workout.letra ?? workout.id.split('-').at(-1) ?? '', name: workout.nome ?? 'Treino', focus: workout.foco ?? 'Treino', weekdays: workout.dias ?? [], modality: program.modalidade ?? 'academia', levels: program.niveis ?? [], example: !!program.exemplo, mobility, mobilityGroup: mobility.length ? workout.mob ?? null : null, estimatedMinutes: estimatedMinutes(rawItems) + (mobility.length ? 5 : 0),
-      items: rawItems.map((item) => { const exercise = exercises.get(item.exId); return { id: item.id, exerciseId: item.exId, sets: item.series ?? 0, repetitions: item.reps ?? '', loadKg: item.carga ?? 0, supportsLoad: item.kg === true || (item.carga ?? 0) > 0, block: item.bloco ?? '', restSeconds: item.descanso ?? 60, notes: item.obs ?? '', exercise: { id: item.exId, name: exercise?.nome ?? 'Exercício', group: exercise?.grupo ?? '', instructions: exercise?.dicas ?? '', commonErrors: exercise?.erros ?? '', alternativeId: exercise?.alternativa, videoUrl: exercise?.videoLink || exercise?.video } }; }),
+      id: workout.id, programId: program.id, letter: workout.letra ?? workout.id.split('-').at(-1) ?? '', name: workout.nome ?? 'Treino', focus: workout.foco ?? 'Treino', weekdays: workout.dias ?? [], modality: program.modalidade ?? 'academia', levels: program.niveis ?? [], example: !!program.exemplo, mobility: [], mobilityGroup: workout.mob ?? null, estimatedMinutes: estimatedMinutes(rawItems.filter((item) => item.bloco?.toLowerCase() !== 'cardio')) + 35,
+      items,
     };
   }));
 }
 
 function mapProgram(content: LegacyContent | null, raw: LegacyProgram | undefined): WorkoutProgramDetails | null {
   if (!raw) return null;
+  const isGymProgram = raw.modalidade === 'academia';
+  const workouts = mapWorkouts(content, raw.id);
+  const normalizedFrequency = (raw.frequencia ?? '').replace(/cárdio/i, 'Cardio');
+  const cardioFrequency = normalizedFrequency.match(/Cardio.*$/i)?.[0]
+    ?.replace(/(por semana)(?!\s*·\s*30–40 min)/i, '$1 · 30–40 min');
+  const frequency = isGymProgram
+    ? `Musculação ${workouts.length}x por semana${cardioFrequency ? ` · ${cardioFrequency}` : ''}`
+    : normalizedFrequency.replace(/^\d+\s+treinos?\s+por semana/i, `${workouts.length} treinos por semana`);
+  const workoutLetters = new Set(workouts.map((workout) => workout.letter));
+  const defaultWeek = Object.fromEntries(Object.entries(raw.semana ?? {}).map(([day, value]) => [
+    day,
+    workoutLetters.has(value) || value.startsWith('cardio') || value === 'descanso' ? value : 'descanso',
+  ]));
   return {
     id: raw.id,
     name: raw.nome ?? 'Programa VEM',
     description: raw.desc ?? '',
     audience: raw.paraQuem ?? '',
-    frequency: raw.frequencia ?? '',
+    frequency,
     duration: raw.duracao ?? '',
     equipment: raw.precisa ?? '',
     warmup: raw.aquecimento === true,
-    defaultWeek: { ...(raw.semana ?? {}) },
+    defaultWeek,
     responsible: { name: content?.responsavel?.nome?.trim() ?? '', registry: content?.responsavel?.cref?.trim() ?? '' },
     phases: (raw.fases ?? []).map((phase, index) => ({ label: phase[0] ?? `Fase ${index + 1}`, name: phase[1] ?? '', description: phase[2] ?? '', ...phaseRange(phase[0] ?? '', index) })),
-    cardio: raw.cardio ?? [],
+    cardio: isGymProgram ? [['Duração', '30–40 min por treino']] : raw.cardio ?? [],
     rules: raw.regras ?? [],
-    workouts: mapWorkouts(content, raw.id),
+    workouts,
   };
 }
 

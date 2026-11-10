@@ -26,13 +26,13 @@ export function VemLoader({ visible }: VemLoaderProps) {
 
   return <Modal visible={visible} animationType="none" transparent={false} statusBarTranslucent navigationBarTranslucent>
     <StatusBar style="light" />
-    <View style={styles.screen} accessibilityViewIsModal accessibilityLabel="VEM Vida em Movimento. Vamos juntos?">
+    <View style={styles.screen} accessibilityViewIsModal accessibilityLabel="VEM Vida em Movimento. Vamos juntas?">
       <View style={styles.orbitLarge} /><View style={styles.orbitSmall} />
       <View style={styles.brand}>
         <Animated.View style={[styles.logoBox, { opacity: logo, transform: [{ scale: logo.interpolate({ inputRange: [0, 1], outputRange: [.76, 1] }) }, { translateY: logo.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }] }]}><Animated.Text style={styles.logo}>VEM</Animated.Text></Animated.View>
         <Animated.Text style={[styles.name, { opacity: name, transform: [{ translateY: name.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }] }]}>Vida em Movimento</Animated.Text>
         <Animated.View style={[styles.goldLine, { transform: [{ scaleX: line }] }]} />
-        <Animated.Text style={[styles.tagline, { opacity: tagline, transform: [{ translateY: tagline.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }]}>Vamos juntos?</Animated.Text>
+        <Animated.Text style={[styles.tagline, { opacity: tagline, transform: [{ translateY: tagline.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }]}>Vamos juntas?</Animated.Text>
       </View>
     </View>
   </Modal>;

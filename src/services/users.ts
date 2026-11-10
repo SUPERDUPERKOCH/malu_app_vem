@@ -57,7 +57,7 @@ function toUserProfile(row: ProfileRow): UserProfile {
     avatarUrl: row.avatar_url ?? undefined,
     objective: row.objective ?? undefined,
     personalGoal: row.personal_goal ?? undefined,
-    weeklyGoal: row.weekly_goal ?? undefined,
+    weeklyGoal: row.weekly_goal == null ? undefined : Math.min(4, Math.max(2, row.weekly_goal)),
     level: row.level as UserProfile['level'],
     modality: row.modality as UserProfile['modality'],
     mealPlanId: row.meal_plan_id ?? undefined,

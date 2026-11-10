@@ -48,7 +48,8 @@ export function calculateRecommendation(answers: QuizAnswers): QuizRecommendatio
     condition: 'Como você informou uma condição de saúde em acompanhamento, o cardápio automático ficará indisponível.',
     injury: 'Respeite seus limites e interrompa qualquer exercício que provoque dor. Procure orientação profissional.',
   };
-  return { level: answers.experience, modality: answers.location, weeklyGoal: answers.daysPerWeek, caloriePlan: blocked ? null : caloriePlan, mealPlanId: blocked ? null : `${caloriePlan}-${nutritionIds[answers.nutrition]}`, estimatedExpenditure: expenditure, calorieTarget: blocked ? null : caloriePlan, mealPlanBlocked: blocked, ...(notices[answers.health] ? { healthNotice: notices[answers.health] } : {}) };
+  const weeklyGoal = Math.min(4, Math.max(2, Math.round(answers.daysPerWeek)));
+  return { level: answers.experience, modality: answers.location, weeklyGoal, caloriePlan: blocked ? null : caloriePlan, mealPlanId: blocked ? null : `${caloriePlan}-${nutritionIds[answers.nutrition]}`, estimatedExpenditure: expenditure, calorieTarget: blocked ? null : caloriePlan, mealPlanBlocked: blocked, ...(notices[answers.health] ? { healthNotice: notices[answers.health] } : {}) };
 }
 
 async function currentUserId(): Promise<string> {
@@ -59,13 +60,15 @@ export async function loadQuizAnswers(): Promise<QuizAnswers | null> {
   const userId = await currentUserId();
   const result = await supabase.from('onboarding_quizzes').select('answers').eq('user_id', userId).maybeSingle();
   if (result.error) throw result.error;
-  return result.data?.answers as unknown as QuizAnswers | null;
+  const answers = result.data?.answers as unknown as QuizAnswers | null;
+  return answers ? { ...answers, daysPerWeek: Math.min(4, Math.max(2, Math.round(answers.daysPerWeek))) } : null;
 }
 
 export async function saveQuizAnswers(answers: QuizAnswers): Promise<QuizRecommendation> {
   const userId = await currentUserId();
-  const recommendation = calculateRecommendation(answers);
-  const quiz = await supabase.from('onboarding_quizzes').upsert({ user_id: userId, answers: answers as unknown as Json, recommendations: recommendation as unknown as Json, completed_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  const normalizedAnswers = { ...answers, daysPerWeek: Math.min(4, Math.max(2, Math.round(answers.daysPerWeek))) };
+  const recommendation = calculateRecommendation(normalizedAnswers);
+  const quiz = await supabase.from('onboarding_quizzes').upsert({ user_id: userId, answers: normalizedAnswers as unknown as Json, recommendations: recommendation as unknown as Json, completed_at: new Date().toISOString() }, { onConflict: 'user_id' });
   if (quiz.error) throw quiz.error;
   const profile = await supabase.from('profiles').update({ objective: objectiveLabels[answers.objective], weekly_goal: recommendation.weeklyGoal, level: recommendation.level, modality: recommendation.modality, meal_plan_id: recommendation.mealPlanId, calorie_goal: recommendation.calorieTarget, onboarding_completed: true }).eq('id', userId);
   if (profile.error) throw profile.error;
