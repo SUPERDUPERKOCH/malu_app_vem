@@ -1,4 +1,5 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import type { Json } from '../types/database';
 import type { LegacyDay } from './home';
 import { getDailyCheckin, saveDailyCheckin, type DailyCheckin } from './dailyCheckins';
 import { getCurrentUserProfile, updateMyProfile } from './users';
@@ -10,7 +11,8 @@ export interface FoodSwap { grupo: string; equivale: string; kcal: number }
 export interface MealPlan { id: string; kcal: number; tipo: string; media?: string; intro?: string; refeicoes: MenuMeal[]; dicas?: string[]; regras?: string[]; trocas?: FoodSwap[] }
 export interface MealProfessional { name: string; registry: string }
 export type FoodSource = 'cardapio' | 'manual';
-export interface FoodEntry { id: string; date: string; ref: string; hora?: string; desc: string; kcal: number; fonte: FoodSource; photoPath?: string; photoUrl?: string }
+export interface FoodItem { id: string; name: string; grams: number; kcalPer100g: number; calories: number }
+export interface FoodEntry { id: string; date: string; ref: string; hora?: string; desc: string; kcal: number; fonte: FoodSource; items: FoodItem[]; photoPath?: string; photoUrl?: string }
 export interface CalorieDay { calories: number; hasPhoto: boolean }
 export interface NutritionDashboard {
   date: string;
@@ -35,6 +37,7 @@ export interface SaveFoodEntryInput {
   description: string;
   calories: number;
   source: FoodSource;
+  items?: FoodItem[];
   /** `undefined` mantém a foto atual; `null` remove; objeto envia uma nova. */
   photo?: PreparedPhoto | null;
 }
@@ -49,16 +52,17 @@ export const MEAL_REFS = [
   { id: 'ceia', label: 'Ceia', defaultTime: '21:30' },
 ] as const;
 
-/** Calorias aproximadas por porção, as mesmas do esboço VEM. */
+/** Calorias aproximadas por 100 g para o seletor do diário alimentar. */
 export const FOOD_REFERENCES: ReadonlyArray<readonly [string, number]> = [
-  ['Pão francês (1 un.)', 150], ['Pão integral (2 fatias)', 120], ['Tapioca (1 média)', 140], ['Ovo cozido (1 un.)', 75], ['Ovos mexidos (2 ovos)', 180],
-  ['Queijo minas (1 fatia)', 80], ['Requeijão light (1 col. sopa)', 40], ['Manteiga (1 col. chá)', 35], ['Leite desnatado (1 copo)', 70], ['Leite integral (1 copo)', 120],
-  ['Iogurte natural (1 pote)', 100], ['Café sem açúcar (1 xíc.)', 5], ['Açúcar (1 col. chá)', 20], ['Banana (1 média)', 90], ['Maçã (1 média)', 70],
-  ['Mamão (1 fatia)', 50], ['Aveia (2 col. sopa)', 75], ['Arroz branco (4 col. sopa)', 130], ['Arroz integral (4 col. sopa)', 125], ['Feijão (1 concha)', 70],
-  ['Frango grelhado (1 filé, 100 g)', 160], ['Carne magra (100 g)', 220], ['Peixe grelhado (100 g)', 130], ['Batata-doce (100 g)', 80], ['Macarrão (1 pegador)', 140],
-  ['Salada de folhas', 15], ['Legumes cozidos (1 xíc.)', 50], ['Azeite (1 col. sopa)', 90], ['Castanhas (1 punhado)', 120], ['Pão de queijo (1 médio)', 100],
-  ['Whey (1 dose)', 120], ['Chocolate (2 quadradinhos)', 110], ['Suco natural (1 copo)', 100], ['Refrigerante (1 lata)', 140], ['Cerveja (1 lata)', 150],
-  ['Pizza (1 fatia)', 280], ['Hambúrguer (1 sanduíche)', 500], ['Açaí com granola (300 ml)', 450],
+  ['Arroz branco cozido', 128], ['Arroz integral cozido', 124], ['Feijão cozido', 76], ['Macarrão cozido', 157],
+  ['Batata inglesa cozida', 52], ['Batata-doce cozida', 77], ['Mandioca cozida', 125], ['Tapioca pronta', 232],
+  ['Pão francês', 300], ['Pão integral', 253], ['Aveia em flocos', 394], ['Granola', 408],
+  ['Peito de frango grelhado', 159], ['Carne bovina magra grelhada', 219], ['Peixe grelhado', 130], ['Ovo cozido', 146], ['Ovo mexido', 182],
+  ['Queijo minas frescal', 264], ['Requeijão light', 184], ['Iogurte natural', 63], ['Leite integral', 61], ['Leite desnatado', 35],
+  ['Banana', 92], ['Maçã', 56], ['Mamão', 45], ['Laranja', 46], ['Morango', 30], ['Abacate', 96],
+  ['Brócolis cozido', 25], ['Cenoura cozida', 30], ['Abobrinha cozida', 15], ['Salada de folhas', 16],
+  ['Azeite de oliva', 884], ['Castanhas', 600], ['Pasta de amendoim', 588], ['Chocolate ao leite', 535],
+  ['Açaí com xarope', 110], ['Pizza', 266], ['Hambúrguer', 250], ['Whey protein em pó', 400],
 ];
 
 const PHOTO_BUCKET = 'food-photos';
@@ -75,6 +79,15 @@ function emptyCheckin(date: string): DailyCheckin { return { date, waterGlasses:
 function toLegacyDay(checkin: DailyCheckin): LegacyDay { return { sessoes: [], agua: checkin.waterGlasses, humor: checkin.mood, refeicoes: checkin.meals, escolhas: checkin.choices, custom: checkin.customHabits, ...(checkin.workoutCompleted ? { concluido: true } : {}) }; }
 function newEntryId(): string { return `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`; }
 function shortTime(value: string | null | undefined): string | undefined { return value ? value.slice(0, 5) : undefined; }
+function parseFoodItems(value: Json): FoodItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const id = raw.id; const name = raw.name; const grams = raw.grams; const kcalPer100g = raw.kcalPer100g;
+    if (typeof id !== 'string' || typeof name !== 'string' || typeof grams !== 'number' || typeof kcalPer100g !== 'number') return [];
+    return [{ id, name, grams, kcalPer100g, calories: Math.round((grams * kcalPer100g) / 100) }];
+  });
+}
 
 async function signedUrls(paths: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(paths)];
@@ -106,7 +119,7 @@ export async function loadNutritionDashboard(date = dateKey()): Promise<Nutritio
   const urls = await signedUrls(rows.flatMap((row) => (row.photo_path ? [row.photo_path] : [])));
   const entries: FoodEntry[] = rows.map((food) => ({
     id: food.id, date: food.entry_date, ref: food.meal_ref, hora: shortTime(food.eaten_at), desc: food.description, kcal: food.calories,
-    fonte: food.source === 'cardapio' ? 'cardapio' : 'manual', photoPath: food.photo_path ?? undefined, photoUrl: food.photo_path ? urls.get(food.photo_path) : undefined,
+    fonte: food.source === 'cardapio' ? 'cardapio' : 'manual', items: parseFoodItems(food.food_items), photoPath: food.photo_path ?? undefined, photoUrl: food.photo_path ? urls.get(food.photo_path) : undefined,
   }));
   return {
     date,
@@ -204,7 +217,7 @@ export async function saveFoodEntry(input: SaveFoodEntryInput): Promise<void> {
   const result = await supabase.from('food_entries').upsert({
     user_id: userId, entry_date: input.date, id, meal_ref: input.ref, eaten_at: input.time || null,
     description: input.description.trim(), calories: Math.max(0, Math.round(input.calories)), source: movedFromMenu ? 'manual' : input.source,
-    photo_path: photoPath, ...(movedFromMenu ? { option_index: null } : {}),
+    photo_path: photoPath, food_items: (input.items ?? []) as unknown as Json, ...(movedFromMenu ? { option_index: null } : {}),
   }, { onConflict: 'user_id,entry_date,id' });
   if (result.error) throw result.error;
 
@@ -214,6 +227,15 @@ export async function saveFoodEntry(input: SaveFoodEntryInput): Promise<void> {
   }
   if (previous?.photoPath && previous.photoPath !== photoPath) await removePhoto(previous.photoPath);
   await syncMealDone(input.date, input.ref, true, movedFromMenu ? previous?.ref : undefined);
+}
+
+export async function updateFoodEntryItems(entry: FoodEntry, items: FoodItem[]): Promise<void> {
+  const userId = await currentUserId();
+  const normalized = items.map((item) => ({ ...item, grams: Math.round(item.grams * 10) / 10, calories: Math.round((item.grams * item.kcalPer100g) / 100) }));
+  const description = normalized.map((item) => `${item.name} — ${String(item.grams).replace('.', ',')} g`).join(', ');
+  const calories = normalized.reduce((sum, item) => sum + item.calories, 0);
+  const result = await supabase.from('food_entries').update({ food_items: normalized as unknown as Json, description, calories }).eq('user_id', userId).eq('entry_date', entry.date).eq('id', entry.id);
+  if (result.error) throw result.error;
 }
 
 export async function deleteFoodEntry(entry: FoodEntry): Promise<void> {

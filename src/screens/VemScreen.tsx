@@ -9,7 +9,7 @@ import { loadVem, toggleReward, type VemData } from '../services/modules';
 import { useAppTheme } from '../theme';
 
 type Tab = 'premios' | 'encontros' | 'curso';
-const TABS: Array<[Tab, string]> = [['premios', 'Prêmios'], ['encontros', 'Encontros e call'], ['curso', 'Curso e materiais']];
+const TABS: Array<[Tab, string]> = [['premios', 'Prêmios'], ['encontros', 'Encontros e call'], ['curso', 'Materiais']];
 const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 const parseDate = (key: string): Date => { const [y, m, d] = key.split('-').map(Number); return new Date(y ?? 2026, (m ?? 1) - 1, d ?? 1); };
@@ -166,7 +166,7 @@ function LessonView({ module, lesson, onClose, onToggle }: { module: CourseModul
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.sheet}>
+      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
         <View style={styles.sheetTop}>
           <Pressable accessibilityRole="button" accessibilityLabel="Voltar" onPress={onClose} style={[styles.backButton, { backgroundColor: theme.colors.surfaceElevated }]}><AppText variant="subtitle" weight="700">‹</AppText></Pressable>
           <View style={styles.flex}><AppText variant="caption" color={theme.colors.textMuted} weight="700">{module.title}</AppText><AppText variant="subtitle" weight="700">{lesson.title}</AppText></View>
@@ -293,7 +293,7 @@ export function VemScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" showsVerticalScrollIndicator={false}>
         <View style={[styles.header, { backgroundColor: theme.colors.brandSurface }]}>
           <AppText color={theme.colors.brandText}>VEM · Vida em Movimento</AppText>
           <AppText variant="title" color={theme.colors.brandText} weight="600">VEM</AppText>

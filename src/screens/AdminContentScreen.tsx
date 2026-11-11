@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, TextInput, View, type KeyboardTypeOptions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AppButton, AppCard, AppText } from '../components';
+import { AppButton, AppCard, AppText, FormScrollView } from '../components';
 import type {
   CourseContentDocument,
   CourseLessonContent,
@@ -477,7 +477,7 @@ function MaterialsTab() {
   const set = (index: number, patch: Partial<NonNullable<GeneralContentDocument['alimentacao']>[number]>): void => update((doc) => { const target = doc.alimentacao?.[index]; if (target) Object.assign(target, patch, { exemplo: false }); });
   return (
     <>
-      <AppText variant="caption" color={theme.colors.textMuted}>Materiais de apoio que aparecem em “Curso e materiais” na aba VEM. Os materiais dos encontros entram sozinhos, pelo campo Materiais de cada encontro.</AppText>
+      <AppText variant="caption" color={theme.colors.textMuted}>Materiais de apoio que aparecem em “Materiais” na aba VEM. Os materiais dos encontros entram sozinhos, pelo campo Materiais de cada encontro.</AppText>
       {materials.map((material, index) => (
         <AppCard key={material.id} style={styles.card}>
           {material.exemplo && <AppText variant="caption" weight="700" color={theme.colors.accent}>Exemplo</AppText>}
@@ -603,7 +603,7 @@ export function AdminContentScreen() {
           </Pressable>
         ))}
       </ScrollView>
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.content}>
         {tab === 'indicadores' && <IndicatorsTab />}
         {tab === 'exercicios' && <ExercisesTab />}
         {tab === 'treinos' && <ProgramsTab />}
@@ -615,7 +615,7 @@ export function AdminContentScreen() {
         {tab === 'lembretes' && <TeamRemindersTab />}
         {tab === 'avisos' && <NoticesTab />}
         {tab === 'premios' && (data ? <RewardsTab data={data} onReload={load} /> : <Loading />)}
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }

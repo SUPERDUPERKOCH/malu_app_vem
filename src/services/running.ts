@@ -6,14 +6,14 @@ import { supabase } from './supabase';
 export interface RunStep { action: string; time: string; pace: string }
 export type RunBlock = RunStep | { repeat: number; steps: RunStep[] };
 export interface VemRunSession { id: string; number: number; week: string; type: 'Walk & Run' | 'Intervalado'; km?: string; minMinutes?: number; blocks: RunBlock[]; tip: string }
-export interface RunRecord { id: string; date: string; km: number; minutes: number; pace: number; effort: number | null; pain: boolean; notes: string }
+export interface RunRecord { id: string; date: string; km: number; durationSeconds: number; minutes: number; pace: number; effort: number | null; pain: boolean; notes: string }
 export type ChallengeType = 'inicio' | 'recuperar' | 'retorno' | 'consolidar' | 'constancia' | 'ritmo' | 'distancia';
 export interface Challenge { type: ChallengeType; title: string; km: number; minutes: number | null; pace: number | null; times?: number; text: string }
 export interface CoachAdvice extends Challenge { reading: string[]; safety: string }
 export interface RunningState { active: (Challenge & { acceptedOn: string }) | null; history: Array<{ type: ChallengeType; km: number; date: string }> }
 export interface TeamRunningPlan { id: string; title: string; description: string; weeks: Array<{ id: string; title: string; text: string; releasesOn: string | null }> }
 export interface RunningData { vemPlan: VemRunSession[]; progress: Record<string, Record<string, string>>; runs: RunRecord[]; state: RunningState; coach: CoachAdvice; teamPlans: TeamRunningPlan[] }
-export interface RunInput { km: number; minutes: number; effort: number; pain: boolean; date: string; notes: string }
+export interface RunInput { km: number; durationSeconds: number; effort: number; pain: boolean; date: string; notes: string }
 
 export const VEM_PLAN_ID = 'vem-corrida';
 export const EFFORT_OPTIONS: ReadonlyArray<readonly [number, string]> = [[3, 'Leve'], [5, 'Confortável'], [7, 'Puxado'], [9, 'No limite']];
@@ -41,11 +41,23 @@ export const VEM_RUNNING_PLAN: VemRunSession[] = (() => {
 })();
 
 const r1 = (value: number): number => Math.round(value * 10) / 10;
-export const formatKm = (value: number): string => `${String(r1(value)).replace('.', ',')} km`;
+export const formatKm = (value: number): string => `${value.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} km`;
 export function formatPace(pace: number | null | undefined): string {
   if (!pace || !Number.isFinite(pace)) return '–';
   const total = Math.round(pace * 60);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')} /km`;
+}
+/** Pace em minutos por quilômetro: tempo total dividido pela distância. */
+export function calculatePace(durationSeconds: number, distanceKm: number): number | null {
+  if (!(durationSeconds > 0) || !(distanceKm > 0)) return null;
+  return durationSeconds / distanceKm / 60;
+}
+export function formatRunTime(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const rest = safe % 60;
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}` : `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 export function dateKey(date = new Date()): string { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
 const parseDate = (key: string): Date => { const [y, m, d] = key.split('-').map(Number); return new Date(y ?? 2026, (m ?? 1) - 1, d ?? 1); };
@@ -99,7 +111,7 @@ export function coachAdvice(runs: RunRecord[], state: RunningState): CoachAdvice
   const reading = [
     `${runs.length} ${runs.length === 1 ? 'corrida registrada' : 'corridas registradas'}; ${recent.length} nas últimas 4 semanas (${String(r1(frequency)).replace('.', ',')} por semana).`,
     `Volume médio: ${formatKm(weeklyVolume)} por semana. Mais longa recente: ${formatKm(longest)}.`,
-    `Última: ${formatKm(last.km)} em ${last.minutes} min (${formatPace(last.pace)}), há ${days === 0 ? 'menos de 1 dia' : days === 1 ? '1 dia' : `${days} dias`}.`,
+    `Última: ${formatKm(last.km)} em ${formatRunTime(last.durationSeconds)} (${formatPace(last.pace)}), há ${days === 0 ? 'menos de 1 dia' : days === 1 ? '1 dia' : `${days} dias`}.`,
   ];
   if (paceBefore && runs.length >= 4) {
     const diff = Math.round((paceBefore - paceAfter) * 60);
@@ -145,8 +157,8 @@ export async function loadRunning(): Promise<RunningData> {
   ]);
   if (runsResult.error) throw runsResult.error; if (progressResult.error) throw progressResult.error; if (profileResult.error) throw profileResult.error; if (generalResult.error) throw generalResult.error;
   const runs: RunRecord[] = (runsResult.data ?? []).flatMap((row) => {
-    const km = Number(row.distance_km); const minutes = Math.round(row.duration_seconds / 60);
-    return km > 0 && minutes > 0 ? [{ id: row.id, date: row.activity_date, km, minutes, pace: minutes / km, effort: row.perceived_effort, pain: row.pain, notes: row.notes ?? '' }] : [];
+    const km = Number(row.distance_km); const durationSeconds = row.duration_seconds; const minutes = durationSeconds / 60; const pace = calculatePace(durationSeconds, km);
+    return km > 0 && durationSeconds > 0 && pace ? [{ id: row.id, date: row.activity_date, km, durationSeconds, minutes, pace, effort: row.perceived_effort, pain: row.pain, notes: row.notes ?? '' }] : [];
   });
   const progress: Record<string, Record<string, string>> = {};
   for (const row of progressResult.data ?? []) (progress[row.plan_id] ??= {})[row.session_id] = row.completed_on;
@@ -188,12 +200,13 @@ export async function dropChallenge(state: RunningState): Promise<void> { await 
 /** Registra a corrida. Retorna o desafio cumprido, se houver. */
 export async function registerRun(input: RunInput, state: RunningState): Promise<Challenge | null> {
   const userId = await currentUserId();
-  if (!(input.km > 0) || !(input.minutes > 0)) throw new Error('Preencha a distância e o tempo.');
-  const pace = input.minutes / input.km;
+  if (!(input.km > 0) || !(input.durationSeconds > 0)) throw new Error('Preencha a distância e o tempo.');
+  const pace = calculatePace(input.durationSeconds, input.km);
+  if (!pace) throw new Error('Preencha a distância e o tempo.');
   if (pace < 2.5 || pace > 20) throw new Error('Confira os números: o ritmo ficou fora do normal.');
   if (input.date > dateKey()) throw new Error('A data não pode ser no futuro.');
   const result = await supabase.from('run_sessions').insert({
-    user_id: userId, activity_date: input.date, distance_km: r1(input.km), duration_seconds: Math.round(input.minutes * 60),
+    user_id: userId, activity_date: input.date, distance_km: Math.round(input.km * 1000) / 1000, duration_seconds: Math.round(input.durationSeconds),
     perceived_effort: input.effort, pain: input.pain, notes: input.notes.trim() || null,
   });
   if (result.error) throw result.error;

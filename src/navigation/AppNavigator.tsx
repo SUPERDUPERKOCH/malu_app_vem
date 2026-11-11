@@ -10,12 +10,14 @@ import { AuthLoadingScreen } from '../screens/AuthLoadingScreen';
 import { AccessStatusScreen } from '../screens/AccessStatusScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { ResetPasswordScreen } from '../screens/ResetPasswordScreen';
 import { WorkoutScreen } from '../screens/WorkoutScreen';
 import { NutritionScreen } from '../screens/NutritionScreen';
 import { EvolutionScreen } from '../screens/EvolutionScreen';
 import { VemScreen } from '../screens/VemScreen';
 import { PanelScreen } from '../screens/PanelScreen';
 import { AdminContentScreen } from '../screens/AdminContentScreen';
+import { DeleteAccountScreen } from '../screens/DeleteAccountScreen';
 import { QuizScreen } from '../screens/QuizScreen';
 import { RemindersScreen } from '../screens/RemindersScreen';
 import { ShareScreen } from '../screens/ShareScreen';
@@ -90,7 +92,7 @@ function MainTabs() {
 
 export function AppNavigator() {
   const theme = useAppTheme();
-  const { loading, profile, session } = useAuth();
+  const { loading, profile, recoveringPassword, session } = useAuth();
   const baseTheme = theme.isDark ? DarkTheme : DefaultTheme;
   const navigationTheme: NavigationTheme = {
     ...baseTheme,
@@ -107,6 +109,21 @@ export function AppNavigator() {
 
   if (loading) return <AuthLoadingScreen />;
 
+  // Disponível com ou sem assinatura ativa (Apple 5.1.1(v) / Google Play).
+  const deleteAccountScreen = (
+    <Stack.Screen
+      name="ExcluirConta"
+      component={DeleteAccountScreen}
+      options={{
+        title: 'Excluir minha conta',
+        headerBackButtonDisplayMode: 'minimal',
+        headerStyle: { backgroundColor: theme.colors.surfaceElevated },
+        headerTintColor: theme.colors.text,
+        headerShadowVisible: false,
+      }}
+    />
+  );
+
   const hasAppAccess = !!profile?.active && (
     profile.role === 'admin' ||
     profile.role === 'coach' ||
@@ -116,7 +133,9 @@ export function AppNavigator() {
   return (
     <NavigationContainer theme={navigationTheme}>
       <Stack.Navigator screenOptions={{ animation: 'fade' }}>
-        {!session ? (
+        {recoveringPassword ? (
+          <Stack.Screen name="RedefinirSenha" component={ResetPasswordScreen} options={{ headerShown: false, gestureEnabled: false }} />
+        ) : !session ? (
           <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
         ) : hasAppAccess && profile.role === 'participant' && !profile.onboardingCompleted ? (
           <Stack.Screen name="Quiz" component={QuizScreen} options={{ headerShown: false, gestureEnabled: false }} />
@@ -139,13 +158,14 @@ export function AppNavigator() {
               name="Compartilhar"
               component={ShareScreen}
               options={({ route }) => ({
-                title: route.params.mode === 'treino' ? 'Treino concluído' : 'Imagem da frase',
+                title: route.params.mode === 'treino' ? 'Treino concluído' : route.params.mode === 'corrida' ? 'Corrida concluída' : 'Imagem da frase',
                 headerBackButtonDisplayMode: 'minimal',
                 headerStyle: { backgroundColor: theme.colors.surfaceElevated },
                 headerTintColor: theme.colors.text,
                 headerShadowVisible: false,
               })}
             />
+            {deleteAccountScreen}
             {profile.role === 'admin' && <Stack.Screen
               name="AdminContent"
               component={AdminContentScreen}
@@ -159,7 +179,10 @@ export function AppNavigator() {
             />}
           </>
         ) : (
-          <Stack.Screen name="AccessStatus" component={AccessStatusScreen} options={{ headerShown: false }} />
+          <>
+            <Stack.Screen name="AccessStatus" component={AccessStatusScreen} options={{ headerShown: false }} />
+            {deleteAccountScreen}
+          </>
         )}
       </Stack.Navigator>
     </NavigationContainer>

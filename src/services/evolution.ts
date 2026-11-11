@@ -19,6 +19,7 @@ export interface UpcomingStep { title: string; remaining: string; progress: numb
 export interface LoadSession { date: string; sets: Array<{ reps: number | null; load: number }>; max: number; volume: number }
 export interface ExerciseLoads { exerciseId: string; name: string; inProgram: boolean; sessions: LoadSession[] }
 export interface MonthlyEvaluation { month: string; scores: AreaScores; savedOn: string }
+export interface MonthlyEvaluationStatus { available: boolean; nextEvaluationAt: string; lastEvaluationAt: string | null; evaluationCount: number }
 export interface WeekBar { start: string; count: number }
 export interface HabitDay { date: string; water: number; meals: number; mood: number | null; trained: boolean }
 
@@ -37,13 +38,14 @@ export interface EvolutionData {
   measurements: Measurement[];
   milestones: Milestone[];
   evaluations: MonthlyEvaluation[];
+  evaluationStatus: MonthlyEvaluationStatus;
   habits: HabitDay[];
   weeks: WeekBar[];
   trainedLast30: number;
   habitDaysLast30: number;
 }
 
-interface WorkoutContent { exercicios?: Array<{ id: string; nome?: string }>; programas?: Array<{ id: string; modalidade?: string; niveis?: string[]; treinos?: Array<{ itens?: Array<{ exId?: string }> }> }> }
+interface WorkoutContent { exercicios?: Array<{ id: string; nome?: string }>; programas?: Array<{ id: string; modalidade?: string; niveis?: string[]; treinos?: Array<{ itens?: Array<{ id?: string; exId?: string }> }> }> }
 
 export function dateKey(date = new Date()): string { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
 export function parseDate(key: string): Date { const [y, m, d] = key.split('-').map(Number); return new Date(y ?? 2026, (m ?? 1) - 1, d ?? 1); }
@@ -115,20 +117,24 @@ function journey(activityDates: string[], weeklyGoal: number): { achievements: J
 export async function loadEvolution(): Promise<EvolutionData> {
   const userId = await currentUserId();
   const today = new Date();
-  const [profile, sessionsResult, runsResult, externalResult, measuresResult, milestonesResult, evaluationsResult, redemptionsResult, rewardsResult, contentResult, checkins] = await Promise.all([
+  const [profile, sessionsResult, runsResult, externalResult, measuresResult, milestonesResult, evaluationsResult, evaluationStatusResult, redemptionsResult, rewardsResult, contentResult, checkins] = await Promise.all([
     getCurrentUserProfile(),
-    supabase.from('workout_sessions').select('id, started_at, exercise_map').eq('user_id', userId).eq('status', 'completed').order('started_at', { ascending: true }),
+    supabase.from('workout_sessions').select('id, started_at, exercise_map, substitutions, items').eq('user_id', userId).eq('status', 'completed').order('started_at', { ascending: true }),
     supabase.from('run_sessions').select('activity_date').eq('user_id', userId),
     supabase.from('external_activities').select('activity_date').eq('user_id', userId),
     supabase.from('body_measurements').select('*').eq('user_id', userId).order('measured_on', { ascending: true }).order('created_at', { ascending: true }),
     supabase.from('progress_milestones').select('*').eq('user_id', userId).order('milestone_date', { ascending: false }),
-    supabase.from('monthly_evaluations').select('reference_month, scores, updated_at').eq('user_id', userId).order('reference_month'),
+    supabase.from('monthly_evaluations').select('reference_month, scores, created_at').eq('user_id', userId).order('created_at'),
+    supabase.rpc('monthly_evaluation_status'),
     supabase.from('user_reward_redemptions').select('reward_id, redeemed_at').eq('user_id', userId),
     supabase.from('rewards').select('id, name'),
     supabase.from('content_documents').select('content').eq('key', 'workouts').maybeSingle(),
     listDailyCheckins(dateKey(addDays(today, -370)), dateKey(today)),
   ]);
-  for (const result of [sessionsResult, runsResult, externalResult, measuresResult, milestonesResult, evaluationsResult, redemptionsResult, rewardsResult, contentResult]) if (result.error) throw result.error;
+  for (const result of [sessionsResult, runsResult, externalResult, measuresResult, milestonesResult, evaluationsResult, evaluationStatusResult, redemptionsResult, rewardsResult, contentResult]) if (result.error) throw result.error;
+
+  const statusRaw = objectValue(evaluationStatusResult.data);
+  const nextEvaluationAt = typeof statusRaw.next_evaluation_at === 'string' ? statusRaw.next_evaluation_at : profile?.createdAt ?? new Date().toISOString();
 
   const sessions = sessionsResult.data ?? [];
   const sessionDate = new Map(sessions.map((row) => [row.id, dateKey(new Date(row.started_at))]));
@@ -148,13 +154,25 @@ export async function loadEvolution(): Promise<EvolutionData> {
   const level = profile?.level === 'advanced' ? 'avancada' : profile?.level === 'intermediate' ? 'intermediaria' : 'iniciante';
   const program = (content?.programas ?? []).find((item) => item.modalidade === modality && (item.niveis ?? []).includes(level));
   const programExercises = new Set((program?.treinos ?? []).flatMap((workout) => (workout.itens ?? []).flatMap((item) => (item.exId ? [item.exId] : []))));
+  const programItemExercises = new Map((content?.programas ?? []).flatMap((item) => item.treinos ?? []).flatMap((workout) => workout.itens ?? []).flatMap((item) => item.id && item.exId ? [[item.id, item.exId] as const] : []));
   const loads = new Map<string, Map<string, LoadSession>>();
   if (sessions.length) {
     const setsResult = await supabase.from('workout_session_sets').select('session_id, item_id, set_index, repetitions, load_kg').in('session_id', sessions.map((row) => row.id)).eq('completed', true).order('set_index');
     if (setsResult.error) throw setsResult.error;
-    const maps = new Map(sessions.map((row) => [row.id, objectValue(row.exercise_map)]));
+    const maps = new Map(sessions.map((row) => {
+      const resolved: Record<string, Json | undefined> = { ...objectValue(row.exercise_map) };
+      if (Array.isArray(row.items)) {
+        for (const raw of row.items) {
+          const item = objectValue(raw);
+          if (typeof item.id === 'string' && typeof item.exId === 'string') resolved[item.id] = item.exId;
+        }
+      }
+      for (const [itemId, exerciseId] of Object.entries(objectValue(row.substitutions))) if (typeof exerciseId === 'string') resolved[itemId] = exerciseId;
+      return [row.id, resolved] as const;
+    }));
     for (const set of setsResult.data ?? []) {
-      const exerciseId = maps.get(set.session_id)?.[set.item_id];
+      const mapped = maps.get(set.session_id)?.[set.item_id];
+      const exerciseId = typeof mapped === 'string' ? mapped : programItemExercises.get(set.item_id) ?? (names.has(set.item_id) ? set.item_id : undefined);
       if (typeof exerciseId !== 'string') continue;
       const bySession = loads.get(exerciseId) ?? new Map<string, LoadSession>();
       const entry = bySession.get(set.session_id) ?? { date: sessionDate.get(set.session_id) ?? '', sets: [], max: 0, volume: 0 };
@@ -167,7 +185,7 @@ export async function loadEvolution(): Promise<EvolutionData> {
     }
   }
   const exerciseLoads: ExerciseLoads[] = [...loads.entries()].map(([exerciseId, bySession]) => ({
-    exerciseId, name: names.get(exerciseId) ?? 'Exercício', inProgram: programExercises.has(exerciseId),
+    exerciseId, name: names.get(exerciseId) ?? exerciseId.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()), inProgram: programExercises.has(exerciseId),
     sessions: [...bySession.values()].sort((a, b) => (a.date < b.date ? -1 : 1)),
   })).sort((a, b) => Number(b.inProgram) - Number(a.inProgram) || b.sessions.length - a.sessions.length);
 
@@ -205,7 +223,13 @@ export async function loadEvolution(): Promise<EvolutionData> {
     loads: exerciseLoads,
     measurements: (measuresResult.data ?? []).map((row) => ({ id: row.id, date: row.measured_on, weight: row.weight_kg ?? undefined, waist: row.waist_cm ?? undefined, hip: row.hip_cm ?? undefined, arm: row.arm_cm ?? undefined })),
     milestones,
-    evaluations: (evaluationsResult.data ?? []).map((row) => ({ month: row.reference_month.slice(0, 7), scores: parseScores(row.scores), savedOn: dateKey(new Date(row.updated_at)) })).filter((item) => Object.keys(item.scores).length > 0),
+    evaluations: (evaluationsResult.data ?? []).map((row) => ({ month: row.reference_month.slice(0, 7), scores: parseScores(row.scores), savedOn: dateKey(new Date(row.created_at)) })).filter((item) => Object.keys(item.scores).length > 0),
+    evaluationStatus: {
+      available: statusRaw.available === true,
+      nextEvaluationAt,
+      lastEvaluationAt: typeof statusRaw.last_evaluation_at === 'string' ? statusRaw.last_evaluation_at : null,
+      evaluationCount: typeof statusRaw.evaluation_count === 'number' ? statusRaw.evaluation_count : 0,
+    },
     habits,
     weeks,
     trainedLast30: last30.filter((date) => trainedSet.has(date)).length,
@@ -241,17 +265,10 @@ export async function deleteMilestone(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** `month` no formato `YYYY-MM`. */
-export async function saveEvaluation(month: string, scores: AreaScores): Promise<void> {
-  const userId = await currentUserId();
+export async function saveEvaluation(scores: AreaScores): Promise<void> {
+  await currentUserId();
   const complete = Object.fromEntries(LIFE_AREAS.map((area) => [area, scores[area] ?? 5]));
-  const { error } = await supabase.from('monthly_evaluations').upsert({ user_id: userId, reference_month: `${month}-01`, scores: complete }, { onConflict: 'user_id,reference_month' });
-  if (error) throw error;
-}
-
-export async function deleteEvaluation(month: string): Promise<void> {
-  const userId = await currentUserId();
-  const { error } = await supabase.from('monthly_evaluations').delete().eq('user_id', userId).eq('reference_month', `${month}-01`);
+  const { error } = await supabase.rpc('submit_monthly_evaluation', { p_scores: complete });
   if (error) throw error;
 }
 

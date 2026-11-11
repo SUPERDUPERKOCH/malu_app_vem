@@ -5,6 +5,7 @@ import { sansFont, serifFont } from '../theme/fonts';
 export type StoryStyle = 'branco' | 'vinhotx' | 'vinho' | 'creme';
 export type StoryPosition = 'topo' | 'centro' | 'base';
 export interface StorySummary { names: string[]; count: number; minutes: number; volumeKg: number; calories: number }
+export interface RunStorySummary { km: string; time: string; pace: string; date: string }
 
 export const STORY_STYLES: ReadonlyArray<readonly [StoryStyle, string]> = [['branco', 'Texto branco'], ['vinhotx', 'Texto vinho'], ['vinho', 'Cartão vinho'], ['creme', 'Cartão creme']];
 export const STORY_POSITIONS: ReadonlyArray<readonly [StoryPosition, string]> = [['topo', 'Topo'], ['centro', 'Centro'], ['base', 'Embaixo']];
@@ -78,9 +79,35 @@ function summaryBlock(summary: StorySummary): Block {
   return { height: y + 60, lines, rects };
 }
 
+function runBlock(run: RunStorySummary): Block {
+  const lines: Line[] = []; const rects: Block['rects'] = [];
+  let y = 90;
+  lines.push({ text: 'VEM', y, size: 62, color: 'accent', font: 'sans', weight: '700', spacing: 14 });
+  y += 48;
+  lines.push({ text: 'VIDA EM MOVIMENTO', y, size: 22, color: 'fg', font: 'sans', weight: '600', spacing: 7 });
+  y += 105;
+  lines.push({ text: 'CORRIDA CONCLUÍDA ✓', y, size: 28, color: 'accent', font: 'sans', weight: '700', spacing: 7 });
+  y += 55;
+  lines.push({ text: run.date, y, size: 27, color: 'fg', font: 'sans', weight: '500', spacing: 2 });
+  y += 35;
+  const columns: Array<[string, string]> = [[run.km, 'DISTÂNCIA'], [run.time, 'TEMPO'], [run.pace, 'PACE']];
+  const columnWidth = (BLOCK - 60) / columns.length;
+  columns.forEach(([value, label], index) => {
+    const x = 30 + columnWidth * index + columnWidth / 2;
+    const size = Math.max(40, Math.min(74, Math.floor((columnWidth - 24) / Math.max(1, value.length * 0.56))));
+    lines.push({ text: value, y: y + 105, size, color: 'fg', font: 'sans', weight: '700', x });
+    lines.push({ text: label, y: y + 154, size: 22, color: 'accent', font: 'sans', weight: '700', spacing: 3, x });
+    if (index > 0) rects.push({ x: 30 + columnWidth * index - 1, y: y + 25, width: 2, height: 135 });
+  });
+  y += 245;
+  lines.push({ text: '@vem.clube', y, size: 32, color: 'fg', font: 'sans', weight: '600', spacing: 3 });
+  return { height: y + 65, lines, rects };
+}
+
 export function StoryArt({
   phrase,
   summary,
+  run,
   style,
   position,
   width,
@@ -88,6 +115,7 @@ export function StoryArt({
 }: {
   phrase?: string;
   summary?: StorySummary;
+  run?: RunStorySummary;
   style: StoryStyle;
   position: StoryPosition;
   width: number;
@@ -97,6 +125,7 @@ export function StoryArt({
   const blocks: Block[] = [];
   if (phrase) blocks.push(phraseBlock(phrase, !summary));
   if (summary) blocks.push(summaryBlock(summary));
+  if (run) blocks.push(runBlock(run));
   const total = blocks.reduce((sum, block) => sum + block.height, 0) + GAP * Math.max(0, blocks.length - 1);
   const scale = Math.min(1, (BOTTOM - TOP) / Math.max(1, total));
   const scaledHeight = total * scale;

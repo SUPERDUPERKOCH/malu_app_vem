@@ -16,6 +16,18 @@ export interface RegisterUserResult {
   requiresEmailConfirmation: boolean;
 }
 
+export type EmailAccessFlow = 'sign_in' | 'register' | 'pending';
+
+export async function checkEmailAccess(email: string, allowPendingRegistration = false): Promise<EmailAccessFlow> {
+  const normalized = email.trim().toLowerCase();
+  const { data, error } = await supabase.functions.invoke<{ flow?: EmailAccessFlow; error?: string }>('check-access-email', {
+    body: { email: normalized, allowPendingRegistration },
+  });
+  if (error) throw error;
+  if (data?.flow === 'sign_in' || data?.flow === 'register' || data?.flow === 'pending') return data.flow;
+  throw new Error(data?.error ?? 'invalid_access_check_response');
+}
+
 export interface UpdateMyProfileInput {
   firstName?: string;
   lastName?: string;

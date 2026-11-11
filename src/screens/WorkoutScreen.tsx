@@ -3,7 +3,6 @@ import {
   Alert,
   BackHandler,
   Pressable,
-  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -12,7 +11,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as Haptics from 'expo-haptics';
-import { AppButton, AppCard, AppText, VemIcon } from '../components';
+import { AppButton, AppCard, AppText, FormScrollView, VemIcon } from '../components';
 import {
   WEEK_DAYS,
   cardioMinutes,
@@ -97,13 +96,15 @@ function ExerciseCard({
   workout,
   session,
   itemIndex,
-  onChanged,
+  onSessionChanged,
+  onSetChanged,
   onRest,
 }: {
   workout: NativeWorkout;
   session: ActiveWorkoutSession;
   itemIndex: number;
-  onChanged: () => Promise<void>;
+  onSessionChanged: (session: ActiveWorkoutSession) => void;
+  onSetChanged: (itemId: string, setIndex: number, completed: boolean) => void;
   onRest: (seconds: number) => void;
 }) {
   const theme = useAppTheme();
@@ -130,8 +131,8 @@ function ExerciseCard({
   const saveLoad = (value: number): Promise<void> => guard(async () => {
     const normalized = Math.max(0, Math.round(value * 2) / 2);
     setLoad(String(normalized));
-    await setWorkoutLoad(session.id, item.id, normalized);
-    await onChanged();
+    const updated = await setWorkoutLoad(session.id, item.id, normalized);
+    if (updated) onSessionChanged(updated);
   });
 
   return (
@@ -186,12 +187,19 @@ function ExerciseCard({
               disabled={busy}
               onPress={() => void guard(async () => {
                 const willComplete = !set.feito;
-                await toggleWorkoutSet(session.id, item.id, index);
+                // A marca aparece no mesmo instante; a gravação acontece sem bloquear a animação.
+                onSetChanged(item.id, index, willComplete);
                 if (willComplete) {
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   onRest(item.restSeconds);
                 }
-                await onChanged();
+                try {
+                  const updated = await toggleWorkoutSet(session.id, item.id, index);
+                  if (updated) onSessionChanged(updated);
+                } catch (error) {
+                  onSetChanged(item.id, index, !willComplete);
+                  throw error;
+                }
               })}
               style={[
                 styles.setButton,
@@ -306,7 +314,7 @@ function ScheduleEditor({
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.sheetTop}>
           <Pressable accessibilityRole="button" accessibilityLabel="Voltar" onPress={onClose} style={[styles.backButton, { backgroundColor: theme.colors.surfaceElevated }]}>
             <AppText variant="subtitle" weight="700">‹</AppText>
@@ -406,7 +414,7 @@ function ScheduleEditor({
             onPress={() => void run(resetWorkoutSchedule, 'Tente novamente em instantes.')}
           />
         )}
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
@@ -527,6 +535,7 @@ export function WorkoutScreen() {
   const [externalType, setExternalType] = useState<string | null>(null);
   const navigation = useNavigation();
   const openSummary = useCallback(() => navigation.navigate('Compartilhar', { mode: 'treino' }), [navigation]);
+  const openRunSummary = useCallback((run: { date: string; km: number; durationSeconds: number; pace: number }) => navigation.navigate('Compartilhar', { mode: 'corrida', ...run }), [navigation]);
   const closeExternal = useCallback(() => setExternalType(null), []);
 
   const [loadError, setLoadError] = useState('');
@@ -558,6 +567,26 @@ export function WorkoutScreen() {
   const activeWorkout = overview?.activeSession
     ? overview.workouts.find((workout) => workout.id === overview.activeSession?.treinoId)
     : null;
+
+  /** Atualiza somente a sessão em memória, sem recarregar programa, agenda, perfil e histórico. */
+  const setActiveSession = useCallback((session: ActiveWorkoutSession): void => {
+    setOverview((current) => current ? { ...current, activeSession: session } : current);
+  }, []);
+
+  const setCompletedOptimistically = useCallback((itemId: string, setIndex: number, completed: boolean): void => {
+    setOverview((current) => {
+      const session = current?.activeSession;
+      const itemSets = session?.series[itemId];
+      const target = itemSets?.[setIndex];
+      if (!current || !session || !itemSets || !target) return current;
+      const nextSets = [...itemSets];
+      nextSets[setIndex] = { ...target, feito: completed };
+      return {
+        ...current,
+        activeSession: { ...session, series: { ...session.series, [itemId]: nextSets } },
+      };
+    });
+  }, []);
 
   if (!overview) {
     return (
@@ -595,7 +624,7 @@ export function WorkoutScreen() {
   );
 
   if (section === 'corrida' && !overview.activeSession) {
-    return <RunningTab header={header} onShare={openSummary} />;
+    return <RunningTab header={header} onShare={openRunSummary} />;
   }
 
   if (editingSchedule && overview.program && overview.schedule) {
@@ -615,8 +644,8 @@ export function WorkoutScreen() {
     if (starting) return;
     setStarting(true);
     try {
-      await startWorkout(workout, { phaseIndex: overview.schedule?.phaseIndex });
-      await load();
+      const session = await startWorkout(workout, { phaseIndex: overview.schedule?.phaseIndex });
+      setActiveSession(session);
     } catch (error) {
       Alert.alert('Não foi possível iniciar o treino', error instanceof Error ? error.message : 'Tente novamente em instantes.');
     } finally {
@@ -660,7 +689,7 @@ export function WorkoutScreen() {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
         <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-        <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <FormScrollView bottomOffset={32} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={[styles.sessionHero, { backgroundColor: theme.colors.brandSurface }]}>
             <View style={styles.heroTitleRow}>
               <View style={[styles.focusPill, { backgroundColor: 'rgba(255,255,255,0.14)' }]}><AppText variant="caption" color={theme.colors.brandText} weight="800">{session.foco.toUpperCase()}</AppText></View>
@@ -669,8 +698,22 @@ export function WorkoutScreen() {
             <AppText variant="title" color={theme.colors.brandText} weight="600">{session.nome}</AppText>
             <View style={styles.sessionStats}>
               <Pressable accessibilityRole="button" accessibilityLabel={session.rodando ? 'Pausar cronômetro' : 'Retomar cronômetro'} onPress={async () => {
-                try { await toggleWorkoutTimer(session.id); await load(); }
-                catch (error) { Alert.alert('Não foi possível pausar ou retomar', error instanceof Error ? error.message : 'Confira a conexão e tente de novo.'); }
+                const running = !session.rodando;
+                const optimistic = {
+                  ...session,
+                  rodando: running,
+                  desde: running ? Date.now() : null,
+                  acum: running ? session.acum : workoutElapsed(session),
+                };
+                setActiveSession(optimistic);
+                try {
+                  const updated = await toggleWorkoutTimer(session.id);
+                  if (updated) setActiveSession(updated);
+                }
+                catch (error) {
+                  setActiveSession(session);
+                  Alert.alert('Não foi possível pausar ou retomar', error instanceof Error ? error.message : 'Confira a conexão e tente de novo.');
+                }
               }} style={styles.sessionStat}>
                 <AppText variant="title" color={theme.colors.brandText} weight="700">{formatTimer(workoutElapsed(session))}</AppText>
                 <AppText variant="caption" color={theme.colors.brandText}>{session.rodando ? 'tocar para pausar' : 'pausado · tocar para seguir'}</AppText>
@@ -700,7 +743,8 @@ export function WorkoutScreen() {
                 workout={activeWorkout}
                 session={session}
                 itemIndex={index}
-                onChanged={load}
+                onSessionChanged={setActiveSession}
+                onSetChanged={setCompletedOptimistically}
                 onRest={(seconds) => setRestUntil(Date.now() + seconds * 1000)}
               />
             ),
@@ -708,7 +752,7 @@ export function WorkoutScreen() {
           )}
           <AppButton label="Finalizar treino" variant={progress.percentage === 100 ? 'primary' : 'secondary'} onPress={finish} />
           <Pressable onPress={discard} style={styles.centerButton}><AppText variant="caption" color={theme.colors.danger} weight="700">Descartar este treino</AppText></Pressable>
-        </ScrollView>
+        </FormScrollView>
       </SafeAreaView>
     );
   }
@@ -721,7 +765,7 @@ export function WorkoutScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         {header}
 
         {overview.completedToday.length > 0 && (
@@ -816,7 +860,7 @@ export function WorkoutScreen() {
           <AppCard style={styles.empty}><AppText color={theme.colors.textMuted}>Nenhum treino foi indicado. Refaça o quiz no Painel para atualizar suas recomendações.</AppText></AppCard>
         )}
         <AppButton label="Registrar atividade feita fora do app" variant="secondary" style={styles.mx} onPress={() => setExternalType('')} />
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }

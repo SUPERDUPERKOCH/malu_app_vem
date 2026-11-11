@@ -23,8 +23,9 @@ Notifications.setNotificationHandler({
 let configured = false;
 
 /**
- * Cria o canal do Android. Com a permissão USE_EXACT_ALARM declarada no app.json, os gatilhos
- * diários, semanais e de data usam `setExactAndAllowWhileIdle()` e disparam no minuto agendado.
+ * Cria o canal do Android. O app não declara alarmes exatos (USE_EXACT_ALARM / SCHEDULE_EXACT_ALARM
+ * ficam bloqueados no app.json por política do Google Play): os lembretes usam agendamento inexato
+ * e o Android pode atrasá-los alguns minutos para economizar bateria.
  */
 export async function configureNotifications(): Promise<void> {
   if (configured) return;
@@ -32,7 +33,7 @@ export async function configureNotifications(): Promise<void> {
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
       name: 'Lembretes VEM',
-      description: 'Lembretes de treino, água, refeições, encontros e os seus lembretes',
+      description: 'Lembretes de treino, água, refeições, encontros e avaliação mensal',
       importance: Notifications.AndroidImportance.HIGH,
       sound: 'default',
       vibrationPattern: [0, 250, 250, 250],
@@ -121,6 +122,22 @@ async function meetingsPlan(): Promise<PlannedNotification[]> {
   });
 }
 
+async function monthlyEvaluationPlan(): Promise<PlannedNotification[]> {
+  const result = await supabase.rpc('monthly_evaluation_status');
+  if (result.error) throw result.error;
+  const raw = result.data;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  const value = raw.next_evaluation_at;
+  if (typeof value !== 'string') return [];
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date <= new Date()) return [];
+  return [{
+    title: 'Sua avaliação do mês está disponível',
+    body: 'Chegou a hora de olhar para sua evolução. Vamos juntas?',
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date, channelId: CHANNEL_ID },
+  }];
+}
+
 /**
  * Reagenda todas as notificações locais a partir do estado atual.
  * Não pede permissão: só agenda quando ela já foi concedida.
@@ -134,6 +151,7 @@ export async function syncNotifications(bundle?: ReminderBundle): Promise<number
   // Treino e encontros dependem de outras consultas; uma falha nelas não impede os demais lembretes.
   if (data.notifyWorkouts) planned.push(...await workoutsPlan(data.settings.workoutTime).catch(() => []));
   if (data.notifyMeetings) planned.push(...await meetingsPlan().catch(() => []));
+  planned.push(...await monthlyEvaluationPlan().catch(() => []));
   await Notifications.cancelAllScheduledNotificationsAsync();
   // iOS limita a 64 notificações agendadas por app.
   const limited = Platform.OS === 'ios' ? planned.slice(0, 60) : planned;

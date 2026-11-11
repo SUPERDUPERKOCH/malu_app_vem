@@ -3,3 +3,22 @@ project_id = "vem-app"
 [functions.kiwify-webhook]
 verify_jwt = false
 
+[functions.check-access-email]
+verify_jwt = false
+
+[functions.apple-notifications]
+verify_jwt = false
+
+[functions.verify-apple-purchase]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.verify-google-purchase]
+verify_jwt = true
+
+# Autenticada pelo token OIDC do Pub/Sub (ou ?token=), não pelo JWT do Supabase.
+[functions.google-notifications]
+verify_jwt = false
+

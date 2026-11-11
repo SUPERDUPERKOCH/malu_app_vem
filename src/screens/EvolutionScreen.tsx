@@ -3,13 +3,12 @@ import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { AppButton, AppCard, AppText, LineChart, VemIcon } from '../components';
+import { AppButton, AppCard, AppText, FormScrollView, LineChart, VemIcon } from '../components';
 import {
   LIFE_AREAS,
   MILESTONE_TYPES,
   averageScore,
   dateKey,
-  deleteEvaluation,
   deleteMeasurement,
   deleteMilestone,
   evaluationMessage,
@@ -24,6 +23,7 @@ import {
   type MilestoneType,
 } from '../services/evolution';
 import { serifFont, useAppTheme } from '../theme';
+import { syncNotifications } from '../services/notifications';
 
 type Tab = 'mapa' | 'cargas' | 'medidas' | 'habitos' | 'marcos';
 const TABS: Array<[Tab, string]> = [['mapa', 'Mapa da evolução'], ['cargas', 'Cargas'], ['medidas', 'Peso e medidas'], ['habitos', 'Hábitos'], ['marcos', 'Marcos']];
@@ -81,6 +81,42 @@ function Diff({ from, to }: { from?: number | null; to?: number | null }) {
   return (
     <View style={[styles.badge, { backgroundColor: diff > 0 ? `${theme.colors.success}22` : diff < 0 ? `${theme.colors.secondary}30` : theme.colors.surfaceElevated }]}>
       <AppText variant="caption" weight="700" color={diff > 0 ? theme.colors.success : theme.colors.text}>{diff > 0 ? '+' : ''}{decimal(diff)}</AppText>
+    </View>
+  );
+}
+
+function ScoreSlider({ label, value, onChange }: { label: string; value?: number; onChange: (value: number) => void }) {
+  const theme = useAppTheme();
+  const [width, setWidth] = useState(0);
+  const position = value ?? 0;
+  const updateFromPosition = (x: number): void => {
+    if (width <= 0) return;
+    onChange(Math.max(0, Math.min(10, Math.round((x / width) * 10))));
+  };
+  return (
+    <View
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={label}
+      accessibilityValue={{ min: 0, max: 10, now: value, text: value === undefined ? 'Não respondido' : `${value} de 10` }}
+      accessibilityActions={[{ name: 'increment', label: 'Aumentar nota' }, { name: 'decrement', label: 'Diminuir nota' }]}
+      onAccessibilityAction={(event) => onChange(Math.max(0, Math.min(10, (value ?? 5) + (event.nativeEvent.actionName === 'increment' ? 1 : -1))))}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={(event) => updateFromPosition(event.nativeEvent.locationX)}
+      onResponderMove={(event) => updateFromPosition(event.nativeEvent.locationX)}
+      style={styles.sliderTouch}
+    >
+      <View style={[styles.sliderTrack, { backgroundColor: theme.colors.surfaceElevated }]}>
+        <View style={[styles.sliderFill, { width: `${position * 10}%`, backgroundColor: theme.colors.primary }]} />
+        <View style={[styles.sliderThumb, { left: `${position * 10}%`, backgroundColor: theme.colors.primary, borderColor: theme.colors.surface }]} />
+      </View>
+      <View style={styles.sliderLabels}>
+        <AppText variant="caption" color={theme.colors.textMuted}>0</AppText>
+        <AppText variant="caption" color={theme.colors.textMuted}>5</AppText>
+        <AppText variant="caption" color={theme.colors.textMuted}>10</AppText>
+      </View>
     </View>
   );
 }
@@ -149,15 +185,10 @@ function TimelineItem({ icon, title, subtitle, eyebrow, gold }: { icon: 'flag' |
 function MonthlyEvaluation({ data, onReload }: { data: EvolutionData; onReload: () => Promise<void> }) {
   const theme = useAppTheme();
   const currentMonth = dateKey().slice(0, 7);
-  const [month, setMonth] = useState(currentMonth);
-  const saved = data.evaluations.find((item) => item.month === month);
-  const [draft, setDraft] = useState<{ month: string; scores: AreaScores } | null>(null);
-  const scores = draft?.month === month ? draft.scores : saved?.scores ?? {};
-  const changed = draft?.month === month && LIFE_AREAS.some((area) => draft.scores[area] !== saved?.scores[area]);
+  const [scores, setScores] = useState<AreaScores>({});
   const [saving, setSaving] = useState(false);
-  const months = Array.from({ length: 12 }, (_, index) => { const date = new Date(); date.setDate(1); date.setMonth(date.getMonth() - index); return dateKey(date).slice(0, 7); });
   const savedMonths = data.evaluations.map((item) => item.month);
-  const previous = data.evaluations.filter((item) => item.month < month).at(-1);
+  const previous = data.evaluations.at(-1);
   const [compareFrom, setCompareFrom] = useState<string | null>(null);
   const [compareTo, setCompareTo] = useState<string | null>(null);
   const from = compareFrom && savedMonths.includes(compareFrom) ? compareFrom : savedMonths.at(-2);
@@ -166,46 +197,37 @@ function MonthlyEvaluation({ data, onReload }: { data: EvolutionData; onReload: 
   const toScores = data.evaluations.find((item) => item.month === to)?.scores;
   const averages = data.evaluations.map((item) => averageScore(item.scores) ?? 0);
 
-  const setScore = (area: (typeof LIFE_AREAS)[number], value: number): void => setDraft({ month, scores: { ...scores, [area]: value } });
+  const setScore = (area: (typeof LIFE_AREAS)[number], value: number): void => setScores((current) => ({ ...current, [area]: value }));
   const save = async (): Promise<void> => {
     setSaving(true);
-    try { await saveEvaluation(month, scores); setDraft(null); await onReload(); }
+    try { await saveEvaluation(scores); setScores({}); await onReload(); void syncNotifications().catch(() => undefined); }
     catch (error) { Alert.alert('Avaliação não salva', error instanceof Error ? error.message : 'Confira sua conexão.'); }
     finally { setSaving(false); }
   };
-  const remove = (): void => Alert.alert(`Apagar a avaliação de ${monthName(month)}?`, '', [
-    { text: 'Voltar', style: 'cancel' },
-    { text: 'Apagar', style: 'destructive', onPress: async () => { try { await deleteEvaluation(month); setDraft(null); await onReload(); } catch { Alert.alert('Não consegui apagar.'); } } },
-  ]);
+  const complete = LIFE_AREAS.every((area) => scores[area] !== undefined);
+  const nextDate = new Date(data.evaluationStatus.nextEvaluationAt).toLocaleDateString('pt-BR');
 
   return (
     <>
-      <Section title="Avaliação do mês" badge={saved ? `salva em ${shortDate(saved.savedOn)}` : 'não salva'}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-          {months.map((item) => {
-            const selected = item === month;
-            return (
-              <Pressable key={item} accessibilityRole="radio" accessibilityState={{ checked: selected }} onPress={() => setMonth(item)} style={[styles.chip, { borderColor: selected ? theme.colors.text : theme.colors.border, backgroundColor: selected ? theme.colors.text : 'transparent' }]}>
-                <AppText variant="caption" weight="600" color={selected ? theme.colors.background : theme.colors.text}>{monthShort(item)}{savedMonths.includes(item) ? ' ✓' : ''}</AppText>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-        <AppText variant="caption" color={theme.colors.textMuted}>Dê uma nota de 0 a 10 pra cada área da sua vida em {monthName(month)}. Dá pra preencher meses anteriores pra ter com o que comparar.</AppText>
-        {LIFE_AREAS.map((area) => (
-          <View key={area} style={styles.areaRow}>
-            <View style={styles.between}><AppText variant="caption" weight="700">{area}</AppText><AppText variant="caption" weight="700" color={theme.colors.primary}>{scores[area] ?? '–'}</AppText></View>
-            <View style={styles.scale} accessibilityRole="adjustable" accessibilityLabel={area} accessibilityValue={{ min: 0, max: 10, now: scores[area] ?? 5 }}>
-              {Array.from({ length: 11 }, (_, value) => {
-                const active = (scores[area] ?? -1) >= value;
-                return <Pressable key={value} accessibilityLabel={`${area}: ${value}`} onPress={() => setScore(area, value)} style={[styles.scaleStep, { backgroundColor: active ? theme.colors.primary : theme.colors.surfaceElevated }]}><AppText style={styles.scaleText} color={active ? '#fff' : theme.colors.textMuted}>{value}</AppText></Pressable>;
-              })}
-            </View>
-          </View>
-        ))}
-        <AppText style={styles.quote} color={theme.colors.primary}>{evaluationMessage(scores, previous?.scores)}</AppText>
-        <AppButton label={saved ? (changed ? 'Salvar alterações' : `Avaliação de ${monthName(month)} salva`) : `Salvar avaliação de ${monthName(month)}`} loading={saving} disabled={!changed && !!saved} onPress={() => void save()} />
-        {!!saved && <Pressable onPress={remove} style={styles.linkCenter}><AppText variant="caption" weight="700" color={theme.colors.danger}>Apagar a avaliação deste mês</AppText></Pressable>}
+      <Section title="Avaliação do mês" badge={data.evaluationStatus.available ? 'disponível' : `libera em ${nextDate}`}>
+        {!data.evaluationStatus.available ? (
+          <>
+            <AppText weight="700">Sua próxima avaliação será liberada em {nextDate}.</AppText>
+            <AppText variant="caption" color={theme.colors.textMuted}>A avaliação é liberada um mês após sua entrada no VEM e, depois disso, um mês após cada resposta. As avaliações salvas ficam no seu histórico e não podem ser alteradas ou apagadas.</AppText>
+          </>
+        ) : (
+          <>
+            <AppText variant="caption" color={theme.colors.textMuted}>Dê uma nota de 0 a 10 pra cada área da sua vida. Depois de salvar, esta avaliação entrará no seu histórico e a próxima será liberada daqui a um mês.</AppText>
+            {LIFE_AREAS.map((area) => (
+              <View key={area} style={styles.areaRow}>
+                <View style={styles.between}><AppText variant="caption" weight="700">{area}</AppText><AppText variant="caption" weight="700" color={theme.colors.primary}>{scores[area] ?? '–'}</AppText></View>
+                <ScoreSlider label={area} value={scores[area]} onChange={(value) => setScore(area, value)} />
+              </View>
+            ))}
+            <AppText style={styles.quote} color={theme.colors.primary}>{evaluationMessage(scores, previous?.scores)}</AppText>
+            <AppButton label={`Salvar avaliação de ${monthName(currentMonth)}`} loading={saving} disabled={!complete} onPress={() => void save()} />
+          </>
+        )}
       </Section>
 
       {data.evaluations.length >= 2 && from && to && fromScores && toScores ? (
@@ -460,7 +482,7 @@ export function EvolutionScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={[styles.header, { backgroundColor: theme.colors.brandSurface }]}>
           <AppText color={theme.colors.brandText}>VEM · Vida em Movimento</AppText>
           <AppText variant="title" color={theme.colors.brandText} weight="600">Evolução</AppText>
@@ -477,7 +499,7 @@ export function EvolutionScreen() {
         {tab === 'medidas' && <MeasurementsTab data={data} onReload={load} />}
         {tab === 'habitos' && <HabitsTab data={data} />}
         {tab === 'marcos' && <MilestonesTab data={data} onReload={load} />}
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
@@ -506,9 +528,11 @@ const styles = StyleSheet.create({
   node: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   nowBox: { borderWidth: 1, borderRadius: 14, padding: 12 },
   areaRow: { gap: 6 },
-  scale: { flexDirection: 'row', gap: 3 },
-  scaleStep: { flex: 1, height: 34, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
-  scaleText: { fontSize: 11 },
+  sliderTouch: { minHeight: 50, justifyContent: 'center', paddingTop: 5 },
+  sliderTrack: { height: 8, borderRadius: 999, marginHorizontal: 10 },
+  sliderFill: { height: 8, borderRadius: 999 },
+  sliderThumb: { position: 'absolute', top: -7, width: 22, height: 22, marginLeft: -11, borderRadius: 11, borderWidth: 3 },
+  sliderLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 7 },
   quote: { fontStyle: 'italic', fontSize: 17, lineHeight: 24, fontFamily: serifFont },
   linkCenter: { alignSelf: 'center', padding: 8 },
   tableRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, borderBottomWidth: 1 },

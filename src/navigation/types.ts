@@ -11,12 +11,14 @@ export type MainTabParamList = {
 
 export type RootStackParamList = {
   Login: undefined;
+  RedefinirSenha: undefined;
   AccessStatus: undefined;
   Principal: NavigatorScreenParams<MainTabParamList> | undefined;
   Quiz: { refazer?: boolean } | undefined;
   AdminContent: undefined;
+  ExcluirConta: undefined;
   Lembretes: { novo?: boolean } | undefined;
-  Compartilhar: { mode: 'treino' | 'frase'; phrase?: string };
+  Compartilhar: { mode: 'treino' | 'frase'; phrase?: string } | { mode: 'corrida'; km: number; durationSeconds: number; pace: number; date: string };
 };
 
 declare global {

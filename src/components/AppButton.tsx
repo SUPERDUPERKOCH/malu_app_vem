@@ -2,7 +2,7 @@ import { ActivityIndicator, Pressable, StyleSheet, type PressableProps, type Vie
 import { useAppTheme } from '../theme';
 import { AppText } from './AppText';
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 interface AppButtonProps extends Omit<PressableProps, 'children' | 'style'> {
   label: string;
@@ -15,9 +15,11 @@ export function AppButton({ label, variant = 'primary', loading = false, disable
   const theme = useAppTheme();
   const isDisabled = disabled || loading;
   const backgroundColor =
-    variant === 'primary' ? theme.colors.primary : variant === 'secondary' ? theme.colors.surfaceElevated : 'transparent';
-  const borderColor = variant === 'primary' ? theme.colors.primary : theme.colors.border;
-  const textColor = variant === 'primary' ? theme.colors.primaryContrast : theme.colors.text;
+    variant === 'primary' ? theme.colors.primary
+      : variant === 'danger' ? theme.colors.danger
+        : variant === 'secondary' ? theme.colors.surfaceElevated : 'transparent';
+  const borderColor = variant === 'primary' ? theme.colors.primary : variant === 'danger' ? theme.colors.danger : theme.colors.border;
+  const textColor = variant === 'primary' || variant === 'danger' ? theme.colors.primaryContrast : theme.colors.text;
 
   return (
     <Pressable

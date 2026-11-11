@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Alert, BackHandler, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { AppButton, AppCard, AppText, LineChart, VemIcon } from '../components';
+import { AppButton, AppCard, AppText, FormScrollView, LineChart, VemIcon } from '../components';
 import { ACTIVITY_TYPES, dateKey, registerExternalActivity } from '../services/activities';
 import {
   EFFORT_OPTIONS,
   VEM_PLAN_ID,
   acceptChallenge,
+  calculatePace,
   dropChallenge,
   formatKm,
   formatPace,
+  formatRunTime,
   loadRunning,
   registerRun,
   togglePlanSession,
@@ -33,6 +35,14 @@ function fromBrDate(value: string): string | null {
   return date.getDate() === Number(match[1]) ? dateKey(date) : null;
 }
 const parseNumber = (value: string): number => Number(value.replace(',', '.'));
+function maskDistance(value: string): string {
+  const normalized = value.replace('.', ',').replace(/[^\d,]/g, '');
+  const [integer = '', ...decimals] = normalized.split(',');
+  const whole = integer.replace(/^0+(?=\d)/, '').slice(0, 3);
+  if (!normalized.includes(',')) return whole;
+  return `${whole || '0'},${decimals.join('').slice(0, 2)}`;
+}
+const maskTimePart = (value: string): string => value.replace(/\D/g, '').slice(0, 2);
 
 function useBack(onBack: () => void): void {
   useEffect(() => {
@@ -90,7 +100,7 @@ export function ExternalActivityEditor({ initialType, onClose, onSaved }: { init
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled">
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.sheet}>
         <SheetHeader title="Registrar atividade" onClose={onClose} />
         <AppText variant="caption" color={theme.colors.textMuted}>Treinou fora do app, fez aula ou caminhou? Registre aqui. Conta pra sua meta e pros seus prêmios.</AppText>
         <AppText variant="caption" weight="600" color={theme.colors.textMuted}>O que você fez</AppText>
@@ -102,15 +112,17 @@ export function ExternalActivityEditor({ initialType, onClose, onSaved }: { init
         <AppText variant="caption" color={theme.colors.textMuted}>Observação (opcional)</AppText>
         <TextInput value={notes} onChangeText={setNotes} placeholder="ex: aula de spinning" placeholderTextColor={theme.colors.textMuted} style={inputStyle} />
         <AppButton label="Registrar" loading={saving} onPress={() => void save()} />
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
 
-function RunEditor({ state, onClose, onSaved }: { state: RunningState; onClose: () => void; onSaved: (completed: Challenge | null, date: string) => Promise<void> }) {
+function RunEditor({ state, onClose, onSaved }: { state: RunningState; onClose: () => void; onSaved: (completed: Challenge | null, run: { date: string; km: number; durationSeconds: number; pace: number }) => Promise<void> }) {
   const theme = useAppTheme();
   const [km, setKm] = useState('');
+  const [hours, setHours] = useState('');
   const [minutes, setMinutes] = useState('');
+  const [seconds, setSeconds] = useState('');
   const [effort, setEffort] = useState(5);
   const [pain, setPain] = useState(false);
   const [date, setDate] = useState(toBrDate(dateKey()));
@@ -118,22 +130,38 @@ function RunEditor({ state, onClose, onSaved }: { state: RunningState; onClose: 
   const [saving, setSaving] = useState(false);
   useBack(onClose);
   const inputStyle = [styles.input, { borderColor: theme.colors.border, color: theme.colors.text, backgroundColor: theme.colors.surface }];
+  const distance = parseNumber(km);
+  const hoursValue = Number(hours || 0);
+  const minutesValue = Number(minutes || 0);
+  const secondsValue = Number(seconds || 0);
+  const validTime = minutesValue <= 59 && secondsValue <= 59;
+  const durationSeconds = validTime ? hoursValue * 3600 + minutesValue * 60 + secondsValue : 0;
+  const pace = calculatePace(durationSeconds, distance);
   const save = async (): Promise<void> => {
     const key = fromBrDate(date);
     if (!key) { Alert.alert('Confira a data', 'Use o formato 06/11/2026.'); return; }
+    if (!validTime) { Alert.alert('Confira o tempo', 'Minutos e segundos precisam estar entre 00 e 59.'); return; }
+    if (durationSeconds <= 0) { Alert.alert('Confira o tempo', 'Informe a duração da corrida.'); return; }
     setSaving(true);
-    try { const completed = await registerRun({ km: parseNumber(km), minutes: parseNumber(minutes), effort, pain, date: key, notes }, state); await onSaved(completed, key); }
+    try { const completed = await registerRun({ km: distance, durationSeconds, effort, pain, date: key, notes }, state); await onSaved(completed, { date: key, km: distance, durationSeconds, pace: calculatePace(durationSeconds, distance) ?? 0 }); }
     catch (error) { Alert.alert('Corrida não registrada', error instanceof Error ? error.message : 'Tente novamente.'); setSaving(false); }
   };
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled">
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.sheet}>
         <SheetHeader title="Registrar corrida" onClose={onClose} />
-        <View style={styles.row}>
-          <View style={styles.flex}><AppText variant="caption" color={theme.colors.textMuted}>Distância (km)</AppText><TextInput value={km} onChangeText={setKm} keyboardType="decimal-pad" placeholder="ex: 3,5" placeholderTextColor={theme.colors.textMuted} style={inputStyle} /></View>
-          <View style={styles.flex}><AppText variant="caption" color={theme.colors.textMuted}>Tempo (min)</AppText><TextInput value={minutes} onChangeText={setMinutes} keyboardType="number-pad" placeholder="ex: 25" placeholderTextColor={theme.colors.textMuted} style={inputStyle} /></View>
+        <AppText variant="caption" color={theme.colors.textMuted}>Distância (km)</AppText>
+        <TextInput value={km} onChangeText={(value) => setKm(maskDistance(value))} keyboardType="decimal-pad" placeholder="0,00" placeholderTextColor={theme.colors.textMuted} maxLength={6} style={inputStyle} />
+        <AppText variant="caption" color={theme.colors.textMuted}>Tempo da corrida</AppText>
+        <View style={styles.timeRow}>
+          <View style={styles.timeField}><TextInput value={hours} onChangeText={(value) => setHours(maskTimePart(value))} keyboardType="number-pad" placeholder="00" placeholderTextColor={theme.colors.textMuted} maxLength={2} style={[inputStyle, styles.timeInput]} /><AppText variant="caption" color={theme.colors.textMuted}>horas</AppText></View>
+          <AppText variant="title" color={theme.colors.textMuted}>:</AppText>
+          <View style={styles.timeField}><TextInput value={minutes} onChangeText={(value) => setMinutes(maskTimePart(value))} keyboardType="number-pad" placeholder="00" placeholderTextColor={theme.colors.textMuted} maxLength={2} style={[inputStyle, styles.timeInput]} /><AppText variant="caption" color={theme.colors.textMuted}>min</AppText></View>
+          <AppText variant="title" color={theme.colors.textMuted}>:</AppText>
+          <View style={styles.timeField}><TextInput value={seconds} onChangeText={(value) => setSeconds(maskTimePart(value))} keyboardType="number-pad" placeholder="00" placeholderTextColor={theme.colors.textMuted} maxLength={2} style={[inputStyle, styles.timeInput]} /><AppText variant="caption" color={theme.colors.textMuted}>seg</AppText></View>
         </View>
+        <View style={[styles.pacePreview, { backgroundColor: theme.colors.surfaceElevated }]}><AppText variant="caption" color={theme.colors.textMuted}>PACE CALCULADO</AppText><AppText variant="title" weight="700" color={theme.colors.primary}>{formatPace(pace)}</AppText></View>
         <AppText variant="caption" weight="600" color={theme.colors.textMuted}>Como foi o esforço?</AppText>
         <Chips options={EFFORT_OPTIONS} value={effort} onChange={setEffort} />
         <View style={styles.between}><AppText style={styles.flex}>Senti dor ou incômodo</AppText><Switch value={pain} onValueChange={setPain} /></View>
@@ -142,7 +170,7 @@ function RunEditor({ state, onClose, onSaved }: { state: RunningState; onClose: 
         <AppText variant="caption" color={theme.colors.textMuted}>Observação (opcional)</AppText>
         <TextInput value={notes} onChangeText={setNotes} placeholder="ex: subida no fim, calor" placeholderTextColor={theme.colors.textMuted} style={inputStyle} />
         <AppButton label="Salvar corrida" loading={saving} onPress={() => void save()} />
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }
@@ -164,7 +192,7 @@ function Blocks({ blocks }: { blocks: RunBlock[] }) {
 }
 
 /** Aba Corrida: planilha VEM, coach, histórico e planilhas publicadas pela equipe. */
-export function RunningTab({ onShare, header }: { onShare: () => void; header: ReactNode }) {
+export function RunningTab({ onShare, header }: { onShare: (run: { date: string; km: number; durationSeconds: number; pace: number }) => void; header: ReactNode }) {
   const theme = useAppTheme();
   const [data, setData] = useState<RunningData | null>(null);
   const [editor, setEditor] = useState<'run' | null>(null);
@@ -178,13 +206,13 @@ export function RunningTab({ onShare, header }: { onShare: () => void; header: R
   useFocusEffect(useCallback(() => { void load(); }, [load]));
   const closeEditor = useCallback(() => setEditor(null), []);
 
-  if (!data) return <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}><ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.screen}>{header}<AppText color={theme.colors.textMuted} style={styles.mx}>Carregando corrida…</AppText></ScrollView></SafeAreaView>;
+  if (!data) return <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}><FormScrollView contentContainerStyle={styles.screen}>{header}<AppText color={theme.colors.textMuted} style={styles.mx}>Carregando corrida…</AppText></FormScrollView></SafeAreaView>;
   if (editor === 'run') {
     return (
-      <RunEditor state={data.state} onClose={closeEditor} onSaved={async (completed, date) => {
+      <RunEditor state={data.state} onClose={closeEditor} onSaved={async (completed, registered) => {
         setEditor(null); await load();
-        if (completed) Alert.alert('Desafio cumprido!', `${completed.title}. Seu coach já preparou o próximo passo.`);
-        else if (date === dateKey()) Alert.alert('Corrida registrada', 'Quer criar a imagem do seu dia?', [{ text: 'Agora não', style: 'cancel' }, { text: 'Criar imagem', onPress: onShare }]);
+        if (registered.date === dateKey()) Alert.alert(completed ? 'Desafio cumprido!' : 'Corrida registrada', `${completed ? `${completed.title}. ` : ''}Quer criar sua imagem com distância, tempo e pace?`, [{ text: 'Agora não', style: 'cancel' }, { text: 'Criar imagem', onPress: () => onShare(registered) }]);
+        else if (completed) Alert.alert('Desafio cumprido!', `${completed.title}. Seu coach já preparou o próximo passo.`);
       }} />
     );
   }
@@ -208,7 +236,7 @@ export function RunningTab({ onShare, header }: { onShare: () => void; header: R
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
     <StatusBar style="light" />
-    <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.screen} showsVerticalScrollIndicator={false}>
+    <FormScrollView contentContainerStyle={styles.screen} showsVerticalScrollIndicator={false}>
     {header}
     <View style={styles.tab}>
       <AppCard style={styles.card}>
@@ -318,7 +346,7 @@ export function RunningTab({ onShare, header }: { onShare: () => void; header: R
           {data.runs.slice(-8).reverse().map((item) => (
             <View key={item.id} style={[styles.historyRow, { borderBottomColor: theme.colors.border }]}>
               <AppText variant="caption" weight="700" style={styles.dateCell}>{shortDate(item.date)}</AppText>
-              <AppText variant="caption" style={styles.flex}>{formatKm(item.km)} · {item.minutes} min · {formatPace(item.pace)}</AppText>
+              <AppText variant="caption" style={styles.flex}>{formatKm(item.km)} · {formatRunTime(item.durationSeconds)} · {formatPace(item.pace)}</AppText>
               <AppText variant="caption" color={item.pain ? theme.colors.danger : theme.colors.textMuted}>{item.pain ? 'dor' : EFFORT_OPTIONS.find(([value]) => value === item.effort)?.[1] ?? '–'}</AppText>
             </View>
           ))}
@@ -359,7 +387,7 @@ export function RunningTab({ onShare, header }: { onShare: () => void; header: R
       })}
       {!!data.teamPlans.length && <AppText variant="caption" color={theme.colors.textMuted} style={styles.mx}>A equipe libera as próximas etapas conforme a planilha avança.</AppText>}
     </View>
-    </ScrollView>
+    </FormScrollView>
     </SafeAreaView>
   );
 }
@@ -376,6 +404,9 @@ const styles = StyleSheet.create({
   noMargin: { marginHorizontal: 0 },
   flex: { flex: 1 },
   row: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  timeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  timeField: { flex: 1, alignItems: 'center', gap: 3 },
+  timeInput: { width: '100%', textAlign: 'center', fontSize: 20, fontWeight: '700' },
   between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   gap4: { gap: 4 },
   gap8: { gap: 8 },
@@ -383,6 +414,7 @@ const styles = StyleSheet.create({
   chip: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7, minHeight: 36, justifyContent: 'center' },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 10, fontSize: 16, marginTop: 4 },
   badge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  pacePreview: { alignItems: 'center', borderRadius: 12, padding: 12, gap: 2 },
   track: { height: 6, borderRadius: 6, overflow: 'hidden' },
   fill: { height: '100%' },
   session: { flexDirection: 'row', alignItems: 'center', gap: 12 },

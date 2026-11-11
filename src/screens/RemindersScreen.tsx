@@ -1,9 +1,9 @@
 import { useCallback, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AppButton, AppCard, AppText } from '../components';
+import { AppButton, AppCard, AppText, FormScrollView } from '../components';
 import type { RootStackParamList } from '../navigation/types';
 import {
   MEAL_SLOTS,
@@ -88,7 +88,7 @@ export function RemindersScreen({ navigation, route }: Props) {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['left', 'right', 'bottom']}>
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.content}>
         {permission !== 'granted' && (
           <AppCard style={[styles.card, { borderColor: theme.colors.accent }]}>
             <AppText weight="700">Notificações desligadas</AppText>
@@ -226,7 +226,7 @@ export function RemindersScreen({ navigation, route }: Props) {
         )}
 
         <AppButton label="Salvar lembretes" loading={saving} onPress={() => void save()} />
-      </ScrollView>
+      </FormScrollView>
     </SafeAreaView>
   );
 }

@@ -40,3 +40,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# secrets locais das Edge Functions (ex.: conta de serviço do Google)
+supabase/.env*

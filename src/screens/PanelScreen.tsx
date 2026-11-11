@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Alert, Linking, Platform, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useFocusEffect, useNavigation, type NavigationProp } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../auth';
-import { AppButton, AppCard, AppText } from '../components';
+import { AppButton, AppCard, AppText, FormScrollView } from '../components';
 import type { RootStackParamList } from '../navigation/types';
 import { loadPanel, savePanel, type PanelProfile } from '../services/modules';
 import { syncNotifications } from '../services/notifications';
+import { openSubscriptionManagement } from '../services/subscriptions';
+import { HEALTH_DISCLAIMER, PRIVACY_POLICY_URL, SUPPORT_INSTAGRAM_URL, SUPPORT_SITE_URL, TERMS_OF_USE_URL } from '../config/links';
 import { useAppTheme } from '../theme';
 
 interface ToggleProps {
@@ -94,11 +96,14 @@ export function PanelScreen() {
   };
 
   const displayName = panel.apelido || profile?.firstName || 'Participante';
+  const manageSubscription = (): void => {
+    void openSubscriptionManagement().catch(() => Alert.alert('Não foi possível abrir', 'Abra as assinaturas pelos ajustes da sua conta na loja de apps.'));
+  };
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]} edges={['top', 'left', 'right']}>
       <StatusBar style="light" />
-      <ScrollView automaticallyAdjustKeyboardInsets contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <FormScrollView bottomOffset={32} contentContainerStyle={styles.content}>
         <View style={[styles.header, { backgroundColor: theme.colors.brandSurface }]}>
           <AppText color={theme.colors.brandText}>VEM · Vida em Movimento</AppText>
           <AppText variant="title" color={theme.colors.brandText}>Painel</AppText>
@@ -195,15 +200,35 @@ export function PanelScreen() {
         {!!error && <AppText color={theme.colors.danger} style={styles.centerText}>{error}</AppText>}
         <AppButton label={saved ? 'Alterações salvas ✓' : 'Salvar alterações'} loading={saving} onPress={save} />
 
+        {profile?.role === 'participant' && (
+          <AppCard style={styles.cardGap}>
+            <AppText variant="title">Assinatura</AppText>
+            <AppText variant="caption" color={theme.colors.textMuted}>
+              {Platform.OS === 'ios'
+                ? 'Assinaturas feitas pela Apple renovam automaticamente até serem canceladas nos Ajustes da sua conta Apple. Cancele com pelo menos 24 horas de antecedência do fim do período para não ser cobrada novamente.'
+                : 'Assinaturas feitas pelo Google Play renovam automaticamente até serem canceladas no Google Play, em Pagamentos e assinaturas. O acesso continua até o fim do período já pago.'}
+            </AppText>
+            <AppButton label="Gerenciar assinatura" variant="secondary" onPress={manageSubscription} />
+          </AppCard>
+        )}
+
         <AppCard style={styles.cardGap}>
           <AppText variant="title">Suporte</AppText>
-          <AppButton label="Instagram @vem.clube" variant="secondary" onPress={() => void Linking.openURL('https://www.instagram.com/vem.clube/')} />
-          <AppButton label="vemclube.com.br" variant="secondary" onPress={() => void Linking.openURL('https://vemclube.com.br')} />
+          <AppButton label="Instagram @vem.clube" variant="secondary" onPress={() => void Linking.openURL(SUPPORT_INSTAGRAM_URL)} />
+          <AppButton label="vemclube.com.br" variant="secondary" onPress={() => void Linking.openURL(SUPPORT_SITE_URL)} />
+        </AppCard>
+
+        <AppCard style={styles.cardGap}>
+          <AppText variant="title">Privacidade e termos</AppText>
+          <AppText variant="caption" color={theme.colors.textMuted}>{HEALTH_DISCLAIMER}</AppText>
+          <AppButton label="Política de privacidade" variant="secondary" onPress={() => void Linking.openURL(PRIVACY_POLICY_URL)} />
+          <AppButton label="Termos de uso" variant="secondary" onPress={() => void Linking.openURL(TERMS_OF_USE_URL)} />
         </AppCard>
 
         {profile?.role === 'admin' && <AppButton label="Conteúdo administrativo" variant="secondary" onPress={() => navigation.navigate('AdminContent')} />}
         <AppButton label="Sair da conta" variant="ghost" onPress={() => void signOut()} />
-      </ScrollView>
+        <AppButton label="Excluir minha conta" variant="ghost" onPress={() => navigation.navigate('ExcluirConta')} />
+      </FormScrollView>
     </SafeAreaView>
   );
 }

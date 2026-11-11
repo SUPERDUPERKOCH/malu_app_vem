@@ -42,9 +42,9 @@ export interface Database {
         Relationships: [];
       };
       food_entries: {
-        Row: Audit & { user_id: string; entry_date: string; id: string; meal_ref: string; eaten_at: string | null; description: string; calories: number; source: string | null; option_index: number | null; photo_path: string | null };
-        Insert: { user_id: string; entry_date: string; id: string; meal_ref: string; eaten_at?: string | null; description: string; calories?: number; source?: string | null; option_index?: number | null; photo_path?: string | null; created_at?: string; updated_at?: string };
-        Update: { eaten_at?: string | null; description?: string; calories?: number; source?: string | null; option_index?: number | null; photo_path?: string | null; updated_at?: string };
+        Row: Audit & { user_id: string; entry_date: string; id: string; meal_ref: string; eaten_at: string | null; description: string; calories: number; source: string | null; option_index: number | null; photo_path: string | null; food_items: Json };
+        Insert: { user_id: string; entry_date: string; id: string; meal_ref: string; eaten_at?: string | null; description: string; calories?: number; source?: string | null; option_index?: number | null; photo_path?: string | null; food_items?: Json; created_at?: string; updated_at?: string };
+        Update: { eaten_at?: string | null; description?: string; calories?: number; source?: string | null; option_index?: number | null; photo_path?: string | null; food_items?: Json; updated_at?: string };
         Relationships: [];
       };
       body_measurements: {
@@ -132,6 +132,8 @@ export interface Database {
       can_access_content: { Args: Record<PropertyKey, never>; Returns: boolean };
       admin_team_indicators: { Args: Record<PropertyKey, never>; Returns: Json };
       validate_my_access: { Args: Record<PropertyKey, never>; Returns: Json };
+      monthly_evaluation_status: { Args: Record<PropertyKey, never>; Returns: Json };
+      submit_monthly_evaluation: { Args: { p_scores: Json }; Returns: string };
     };
     Enums: { app_role: 'participant' | 'coach' | 'admin'; subscription_status: 'pending' | 'active' | 'suspended' | 'cancelled' };
     CompositeTypes: Record<never, never>;

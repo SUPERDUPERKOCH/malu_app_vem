@@ -8,6 +8,7 @@ import { AppButton, AppCard, AppText, STORY_POSITIONS, STORY_SIZE, STORY_STYLES,
 import type { RootStackParamList } from '../navigation/types';
 import { loadPhraseOfDay } from '../services/home';
 import { COMPLETION_PHRASES, loadDaySummary, savePngToGallery, sharePng, type DaySummary } from '../services/share';
+import { formatKm, formatPace, formatRunTime } from '../services/running';
 import { serifFont, useAppTheme } from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Compartilhar'>;
@@ -35,12 +36,13 @@ function Options<T extends string>({ options, value, onChange }: { options: Read
 export function ShareScreen({ navigation, route }: Props) {
   const theme = useAppTheme();
   const mode = route.params.mode;
+  const initialPhrase = 'phrase' in route.params ? route.params.phrase ?? '' : '';
   const svgRef = useRef<Svg>(null);
   const iosExportRef = useRef<Svg>(null);
   const [summary, setSummary] = useState<DaySummary | null>(null);
-  const [phrase, setPhrase] = useState(route.params.phrase ?? '');
+  const [phrase, setPhrase] = useState(initialPhrase);
   const [style, setStyle] = useState<StoryStyle>('branco');
-  const [position, setPosition] = useState<StoryPosition>(mode === 'frase' ? 'centro' : 'base');
+  const [position, setPosition] = useState<StoryPosition>(mode === 'frase' ? 'centro' : mode === 'corrida' ? 'centro' : 'base');
   const [withPhrase, setWithPhrase] = useState(false);
   const [dark, setDark] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -49,8 +51,8 @@ export function ShareScreen({ navigation, route }: Props) {
 
   useFocusEffect(useCallback(() => {
     if (mode === 'treino') loadDaySummary().then(setSummary).catch((error: unknown) => Alert.alert('Não foi possível carregar o resumo', error instanceof Error ? error.message : 'Confira sua conexão.'));
-    if (!route.params.phrase) loadPhraseOfDay().then(setPhrase).catch(() => undefined);
-  }, [mode, route.params.phrase]));
+    if (!initialPhrase) loadPhraseOfDay().then(setPhrase).catch(() => undefined);
+  }, [initialPhrase, mode]));
 
 /** Gera o PNG 1080×1920 e entrega para salvar ou compartilhar. */
   const exportImage = (action: 'share' | 'save'): void => {
@@ -69,7 +71,8 @@ export function ShareScreen({ navigation, route }: Props) {
   if (mode === 'treino' && !summary) return <SafeAreaView style={[styles.center, { backgroundColor: theme.colors.background }]}><AppText color={theme.colors.textMuted}>Montando seu resumo…</AppText></SafeAreaView>;
 
   const storySummary = summary ? { names: summary.names, count: summary.count, minutes: summary.minutes, volumeKg: summary.volumeKg, calories: summary.calories } : undefined;
-  const artProps = { style, position, phrase: mode === 'frase' || withPhrase ? phrase : undefined, summary: mode === 'treino' ? storySummary : undefined };
+  const runSummary = route.params.mode === 'corrida' ? { km: formatKm(route.params.km), time: formatRunTime(route.params.durationSeconds), pace: formatPace(route.params.pace).replace(' /km', ''), date: new Date(`${route.params.date}T12:00:00`).toLocaleDateString('pt-BR') } : undefined;
+  const artProps = { style, position, phrase: mode === 'frase' || withPhrase ? phrase : undefined, summary: mode === 'treino' ? storySummary : undefined, run: runSummary };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.colors.background }]} edges={['left', 'right', 'bottom']}>
@@ -90,7 +93,7 @@ export function ShareScreen({ navigation, route }: Props) {
         )}
 
         <AppCard style={styles.card}>
-          <View style={styles.between}><AppText variant="subtitle" weight="700">{mode === 'treino' ? 'Sua imagem para os stories' : 'Frase do dia'}</AppText><AppText variant="caption" color={theme.colors.textMuted}>PNG transparente</AppText></View>
+          <View style={styles.between}><AppText variant="subtitle" weight="700">{mode === 'treino' ? 'Sua imagem para os stories' : mode === 'corrida' ? 'Sua corrida para os stories' : 'Frase do dia'}</AppText><AppText variant="caption" color={theme.colors.textMuted}>PNG transparente</AppText></View>
           <AppText variant="caption" color={theme.colors.textMuted}>Estilo</AppText>
           <Options options={STORY_STYLES} value={style} onChange={setStyle} />
           <AppText variant="caption" color={theme.colors.textMuted}>Posição no story</AppText>
